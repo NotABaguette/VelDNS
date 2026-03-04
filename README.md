@@ -4,7 +4,7 @@
 
 **High-performance, concurrent DNS server written in Rust**
 
-[![Build](https://github.com/your-org/veldns/actions/workflows/release.yml/badge.svg)](https://github.com/your-org/veldns/actions)
+[![Build](https://github.com/notABaguette/veldns/actions/workflows/build-cross-release.yml/badge.svg)](https://github.com/notABaguette/veldns/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 
@@ -33,12 +33,13 @@
 
 ### Download a pre-built binary
 
-Visit the [Releases](https://github.com/your-org/veldns/releases) page and download the archive for your platform.  Each archive contains the binary, a sample config, and a sample static-records CSV.
+Visit the [Releases](https://github.com/notABaguette/veldns/releases) page and download the archive for your platform.  Each archive contains the binary, a sample config, and a sample static-records CSV.
 
 ```bash
 tar -xzf veldns-*-x86_64-unknown-linux-musl.tar.gz
 cd veldns-*/
 sudo cp veldns /usr/local/bin/
+sudo mkdir /etc/veldns
 veldns --help
 ```
 
@@ -46,7 +47,7 @@ veldns --help
 
 ```bash
 # Prerequisites: Rust 1.75+ (https://rustup.rs)
-git clone https://github.com/your-org/veldns.git
+git clone https://github.com/notABaguette/veldns.git
 cd veldns
 cargo build --release
 ./target/release/veldns --config config.toml
@@ -191,7 +192,7 @@ Lines starting with `#` are comments.  Blank lines are ignored.
 
 | Platform | Target triple |
 |----------|--------------|
-| Linux x86-64 (glibc)       | `x86_64-unknown-linux-gnu`      |
+| Linux x86-64 (glibc) (Typical Linux VM)       | `x86_64-unknown-linux-gnu`      |
 | Linux x86-64 (static musl) | `x86_64-unknown-linux-musl`     |
 | Linux ARM64 (glibc)        | `aarch64-unknown-linux-gnu`     |
 | Linux ARM64 (static musl)  | `aarch64-unknown-linux-musl`    |
@@ -220,6 +221,7 @@ sudo veldns --config /etc/veldns/config.toml
 ```
 
 ### systemd service
+Just make sure to copy modified config.toml and static_records.csv into /etc/veldns before starting the service.
 
 ```ini
 # /etc/systemd/system/veldns.service
@@ -294,4 +296,4 @@ cross build --release --target aarch64-unknown-linux-musl
 
 ## 📝 License
 
-MIT – see [LICENSE](LICENSE).
+Use, modify and distribute as you like :)
