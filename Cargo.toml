@@ -4,7 +4,7 @@ version     = "0.2.0"
 edition     = "2021"
 description = "High-performance, concurrent DNS server with static record overrides and upstream mirroring"
 license     = "MIT"
-repository  = "https://github.com/your-org/veldns"
+repository  = "https://github.com/NotABaguette/VelDNS"
 keywords    = ["dns", "server", "network", "dnssec"]
 categories  = ["network-programming", "command-line-utilities"]
 
