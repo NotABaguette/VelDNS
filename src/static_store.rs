@@ -208,8 +208,8 @@ fn build_record(name: &str, rtype: RecordType, ttl: u32, value: &str) -> Result<
         // ── TXT ───────────────────────────────────────────────────────────
         // Multiple strings separated by '|'
         RecordType::TXT => {
-            let strings: Vec<Vec<u8>> = value.split('|')
-                .map(|s| s.trim().as_bytes().to_vec())
+            let strings: Vec<String> = value.split('|')
+                .map(|s| s.trim().to_string())
                 .collect();
             RData::TXT(TXT::new(strings))
         }

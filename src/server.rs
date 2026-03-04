@@ -151,7 +151,7 @@ async fn tcp_acceptor(listener: TcpListener, handler: Handler) {
 
 async fn tcp_session(
     mut stream: tokio::net::TcpStream,
-    src:        SocketAddr,
+    _src:       SocketAddr,
     handler:    Handler,
 ) -> Result<()> {
     // TCP DNS: a stream of messages each preceded by a 2-byte big-endian length.

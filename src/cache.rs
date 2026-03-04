@@ -2,7 +2,6 @@ use crate::config::CacheConfig;
 use dashmap::DashMap;
 use hickory_proto::op::Message;
 use hickory_proto::rr::RecordType;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::trace;
 

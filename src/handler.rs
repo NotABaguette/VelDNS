@@ -60,7 +60,7 @@ impl Handler {
         let name_s = qname.to_string();
         let name   = name_s.trim_end_matches('.');
 
-        let do_bit = msg.edns().map(|e| e.dnssec_ok()).unwrap_or(false);
+        let do_bit = msg.extensions().as_ref().map(|e| e.dnssec_ok()).unwrap_or(false);
 
         if self.cfg.logging.log_queries {
             debug!(name, ?qtype, do_bit, "query");
@@ -215,7 +215,7 @@ fn patch_ttls(msg: &mut Message, remaining: u32) {
 fn ensure_do_bit(raw: &[u8], payload: u16) -> Vec<u8> {
     match Message::from_vec(raw) {
         Ok(mut msg) => {
-            let mut edns = msg.edns().cloned().unwrap_or_else(Edns::new);
+            let mut edns = msg.extensions().cloned().unwrap_or_else(Edns::new);
             edns.set_dnssec_ok(true);
             if edns.max_payload() < payload {
                 edns.set_max_payload(payload);
