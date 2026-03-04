@@ -60,6 +60,7 @@ impl Handler {
         let name_s = qname.to_string();
         let name   = name_s.trim_end_matches('.');
 
+        // extensions() returns &Option<Edns>; as_ref() converts to Option<&Edns>
         let do_bit = msg.extensions().as_ref().map(|e| e.dnssec_ok()).unwrap_or(false);
 
         if self.cfg.logging.log_queries {
@@ -67,19 +68,20 @@ impl Handler {
         }
 
         // ── 1. Static override ────────────────────────────────────────────
-        if self.cfg.static_records.authoritative || self.store.has_domain(name) {
-            if let Some(records) = self.store.lookup(name, qtype) {
-                self.metrics.queries_static();
-                let resp = self.build_static_response(&msg, records, false, do_bit);
-                return self.encode_and_emit(resp);
-            }
+        // Always consult the static store first, regardless of the
+        // `authoritative` flag (that flag only controls the AA bit in the
+        // response, not whether we serve static data at all).
+        if let Some(records) = self.store.lookup(name, qtype) {
+            self.metrics.queries_static();
+            let resp = self.build_static_response(&msg, records, false, do_bit);
+            return self.encode_and_emit(resp);
+        }
 
-            // Domain exists in static store but not this type → NOERROR / empty
-            if self.store.has_domain(name) {
-                self.metrics.queries_static();
-                let resp = self.build_static_response(&msg, vec![], false, do_bit);
-                return self.encode_and_emit(resp);
-            }
+        // Domain exists in static store but not this record type → NOERROR / empty answer
+        if self.store.has_domain(name) {
+            self.metrics.queries_static();
+            let resp = self.build_static_response(&msg, vec![], false, do_bit);
+            return self.encode_and_emit(resp);
         }
 
         // ── 2. Cache ──────────────────────────────────────────────────────
@@ -90,7 +92,7 @@ impl Handler {
             self.metrics.cache_hits();
 
             let remaining = entry.remaining_ttl();
-            // Clone the cached message, patch ID and TTLs.
+            // Clone the cached message, then patch the ID and TTLs.
             let mut cached = entry.message.clone();
             cached.set_id(msg.id());
             patch_ttls(&mut cached, remaining);
@@ -141,10 +143,10 @@ impl Handler {
 
     fn build_static_response(
         &self,
-        q:       &Message,
-        answers: Vec<Record>,
-        nxdomain:bool,
-        do_bit:  bool,
+        q:        &Message,
+        answers:  Vec<Record>,
+        nxdomain: bool,
+        do_bit:   bool,
     ) -> Message {
         let mut r = Message::new();
         r.set_id(q.id());
@@ -202,20 +204,24 @@ impl Handler {
 // Free helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Clamp every answer/authority/additional TTL to `remaining`.
+/// Clamp every answer / authority / additional TTL down to `remaining`.
 fn patch_ttls(msg: &mut Message, remaining: u32) {
-    for r in msg.answers_mut()    { r.set_ttl(r.ttl().min(remaining)); }
+    for r in msg.answers_mut()       { r.set_ttl(r.ttl().min(remaining)); }
     for r in msg.name_servers_mut()  { r.set_ttl(r.ttl().min(remaining)); }
     for r in msg.additionals_mut()   { r.set_ttl(r.ttl().min(remaining)); }
 }
 
 /// Return a copy of the raw query bytes with the EDNS0 DO bit set.
 ///
-/// If there is no OPT record yet one is added with payload size `payload`.
+/// `extensions()` returns `&Option<Edns>`.  Calling `.clone()` on a
+/// `&Option<T>` yields an owned `Option<T>` (not an iterator), so we can
+/// then call `.unwrap_or_else` directly – no `.cloned()` needed.
 fn ensure_do_bit(raw: &[u8], payload: u16) -> Vec<u8> {
     match Message::from_vec(raw) {
         Ok(mut msg) => {
-            let mut edns = msg.extensions().cloned().unwrap_or_else(Edns::new);
+            // extensions() -> &Option<Edns>
+            // .clone()     -> Option<Edns>   (clone the Option, not an iterator)
+            let mut edns = msg.extensions().clone().unwrap_or_else(Edns::new);
             edns.set_dnssec_ok(true);
             if edns.max_payload() < payload {
                 edns.set_max_payload(payload);

@@ -22,16 +22,15 @@ use tracing::{info, warn};
 ///   domain,type,ttl,value
 ///
 /// Value format per type:
-///   A      → IPv4 address          e.g.  192.168.1.1
-///   AAAA   → IPv6 address          e.g.  ::1
-///   CNAME  → target FQDN           e.g.  www.example.com.
-///   NS     → name server FQDN      e.g.  ns1.example.com.
-///   PTR    → pointer FQDN          e.g.  host.example.com.
-///   MX     → priority SP exchange  e.g.  10 mail.example.com.
-///   TXT    → text (| separates multiple strings)  e.g.  v=spf1 ~all
-///   SRV    → priority SP weight SP port SP target  e.g.  10 20 443 svc.example.com.
-///   SOA    → mname SP rname SP serial SP refresh SP retry SP expire SP minimum
-///   CAA    → flags SP tag SP value  e.g.  0 issue "letsencrypt.org"
+///   A      → IPv4 address                               e.g.  192.168.1.1
+///   AAAA   → IPv6 address                               e.g.  ::1
+///   CNAME  → target FQDN (trailing dot optional)        e.g.  www.example.com.
+///   NS     → name server FQDN                           e.g.  ns1.example.com.
+///   PTR    → pointer FQDN                               e.g.  host.example.com.
+///   MX     → "priority exchange"                        e.g.  10 mail.example.com.
+///   TXT    → text; separate multiple strings with |     e.g.  v=spf1 ~all
+///   SRV    → "priority weight port target"              e.g.  10 20 443 svc.example.com.
+///   SOA    → "mname rname serial refresh retry expire minimum"
 #[derive(Debug, Deserialize)]
 struct CsvRow {
     domain: String,
@@ -53,7 +52,6 @@ struct CsvRow {
 pub struct StaticStore {
     records:    DashMap<(String, RecordType), Vec<Record>>,
     domain_set: DashMap<String, ()>,
-    count:      usize,
 }
 
 impl StaticStore {
@@ -66,7 +64,7 @@ impl StaticStore {
 
         if !std::path::Path::new(path).exists() {
             warn!("Static records file '{}' not found – running without static overrides", path);
-            return Ok(Arc::new(Self { records, domain_set, count: 0 }));
+            return Ok(Arc::new(Self { records, domain_set }));
         }
 
         let mut rdr = csv::ReaderBuilder::new()
@@ -84,7 +82,10 @@ impl StaticStore {
 
             let rtype = match parse_rtype(&row.rtype) {
                 Some(t) => t,
-                None    => { warn!("CSV line {}: unknown type '{}'", line_idx + 2, row.rtype); continue; }
+                None => {
+                    warn!("CSV line {}: unknown record type '{}'", line_idx + 2, row.rtype);
+                    continue;
+                }
             };
 
             let name_norm = normalize(&row.domain);
@@ -102,7 +103,7 @@ impl StaticStore {
         }
 
         info!("Loaded {count} static DNS records from '{path}'");
-        Ok(Arc::new(Self { records, domain_set, count }))
+        Ok(Arc::new(Self { records, domain_set }))
     }
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -114,13 +115,9 @@ impl StaticStore {
     }
 
     /// Return true if the store has *any* record for this name (any type).
-    /// Used to distinguish NOERROR-empty from NXDOMAIN.
+    /// Used to distinguish NOERROR-empty from NXDOMAIN for unknown record types.
     pub fn has_domain(&self, name: &str) -> bool {
         self.domain_set.contains_key(&normalize(name))
-    }
-
-    pub fn len(&self) -> usize {
-        self.count
     }
 }
 
@@ -128,10 +125,12 @@ impl StaticStore {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Lowercase and strip a trailing dot so all keys are in canonical form.
 fn normalize(name: &str) -> String {
     name.to_lowercase().trim_end_matches('.').to_string()
 }
 
+/// Ensure a domain name string ends with a dot (absolute FQDN).
 fn ensure_fqdn(s: &str) -> String {
     if s.ends_with('.') { s.to_string() } else { format!("{s}.") }
 }
@@ -147,66 +146,68 @@ fn parse_rtype(s: &str) -> Option<RecordType> {
         "TXT"   => Some(RecordType::TXT),
         "SRV"   => Some(RecordType::SRV),
         "SOA"   => Some(RecordType::SOA),
-        "CAA"   => Some(RecordType::CAA),
-        "NAPTR" => Some(RecordType::NAPTR),
         _       => None,
     }
 }
 
 fn build_record(name: &str, rtype: RecordType, ttl: u32, value: &str) -> Result<Record> {
     let dns_name = Name::from_str(&ensure_fqdn(name))
-        .with_context(|| format!("Invalid domain '{name}'"))?;
+        .with_context(|| format!("Invalid domain name '{name}'"))?;
 
     let rdata: RData = match rtype {
         // ── A ─────────────────────────────────────────────────────────────
         RecordType::A => {
             let ip: Ipv4Addr = value.trim().parse()
-                .with_context(|| format!("Invalid IPv4 '{value}'"))?;
+                .with_context(|| format!("Invalid IPv4 address '{value}'"))?;
             RData::A(A(ip))
         }
 
         // ── AAAA ──────────────────────────────────────────────────────────
         RecordType::AAAA => {
             let ip: Ipv6Addr = value.trim().parse()
-                .with_context(|| format!("Invalid IPv6 '{value}'"))?;
+                .with_context(|| format!("Invalid IPv6 address '{value}'"))?;
             RData::AAAA(AAAA(ip))
         }
 
         // ── CNAME ─────────────────────────────────────────────────────────
         RecordType::CNAME => {
             let target = Name::from_str(&ensure_fqdn(value.trim()))
-                .with_context(|| "Invalid CNAME target")?;
+                .context("CNAME: invalid target name")?;
             RData::CNAME(CNAME(target))
         }
 
         // ── NS ────────────────────────────────────────────────────────────
         RecordType::NS => {
             let ns = Name::from_str(&ensure_fqdn(value.trim()))
-                .with_context(|| "Invalid NS name")?;
+                .context("NS: invalid name server name")?;
             RData::NS(NS(ns))
         }
 
         // ── PTR ───────────────────────────────────────────────────────────
         RecordType::PTR => {
             let ptr = Name::from_str(&ensure_fqdn(value.trim()))
-                .with_context(|| "Invalid PTR name")?;
+                .context("PTR: invalid pointer name")?;
             RData::PTR(PTR(ptr))
         }
 
         // ── MX ────────────────────────────────────────────────────────────
-        // Value: "priority exchange"  e.g.  "10 mail.example.com."
+        // Value format: "priority exchange"  e.g.  "10 mail.example.com."
         RecordType::MX => {
             let mut parts = value.splitn(2, ' ');
-            let prio: u16 = parts.next().context("MX: missing priority")?
-                .trim().parse().context("MX: invalid priority")?;
+            let prio: u16 = parts.next()
+                .context("MX: missing priority")?
+                .trim().parse()
+                .context("MX: priority must be a u16")?;
             let exchange = parts.next().context("MX: missing exchange")?.trim();
-            let name = Name::from_str(&ensure_fqdn(exchange))
+            let exchange_name = Name::from_str(&ensure_fqdn(exchange))
                 .context("MX: invalid exchange name")?;
-            RData::MX(MX::new(prio, name))
+            RData::MX(MX::new(prio, exchange_name))
         }
 
         // ── TXT ───────────────────────────────────────────────────────────
-        // Multiple strings separated by '|'
+        // Separate multiple strings with '|'
+        // e.g.  "v=spf1 include:example.com ~all"
+        //        or with two strings: "v=spf1 ~all|another string"
         RecordType::TXT => {
             let strings: Vec<String> = value.split('|')
                 .map(|s| s.trim().to_string())
@@ -215,42 +216,51 @@ fn build_record(name: &str, rtype: RecordType, ttl: u32, value: &str) -> Result<
         }
 
         // ── SRV ───────────────────────────────────────────────────────────
-        // Value: "priority weight port target"
+        // Value format: "priority weight port target"
         RecordType::SRV => {
             let mut parts = value.splitn(4, ' ');
-            let prio:   u16 = parts.next().context("SRV: missing priority")?.trim().parse()?;
-            let weight: u16 = parts.next().context("SRV: missing weight")?.trim().parse()?;
-            let port:   u16 = parts.next().context("SRV: missing port")?.trim().parse()?;
-            let target = parts.next().context("SRV: missing target")?.trim();
-            let target = Name::from_str(&ensure_fqdn(target)).context("SRV: invalid target")?;
-            RData::SRV(SRV::new(prio, weight, port, target))
+            let priority: u16 = parts.next().context("SRV: missing priority")?.trim().parse()
+                .context("SRV: priority must be u16")?;
+            let weight:   u16 = parts.next().context("SRV: missing weight")?.trim().parse()
+                .context("SRV: weight must be u16")?;
+            let port:     u16 = parts.next().context("SRV: missing port")?.trim().parse()
+                .context("SRV: port must be u16")?;
+            let target_str = parts.next().context("SRV: missing target")?.trim();
+            let target = Name::from_str(&ensure_fqdn(target_str))
+                .context("SRV: invalid target name")?;
+            RData::SRV(SRV::new(priority, weight, port, target))
         }
 
         // ── SOA ───────────────────────────────────────────────────────────
-        // Value: "mname rname serial refresh retry expire minimum"
+        // Value format: "mname rname serial refresh retry expire minimum"
         RecordType::SOA => {
             let p: Vec<&str> = value.split_whitespace().collect();
-            anyhow::ensure!(p.len() >= 7, "SOA: expected 7 fields");
-            let mname   = Name::from_str(&ensure_fqdn(p[0]))?;
-            let rname   = Name::from_str(&ensure_fqdn(p[1]))?;
-            let serial:  u32 = p[2].parse()?;
-            let refresh: i32 = p[3].parse()?;
-            let retry:   i32 = p[4].parse()?;
-            let expire:  i32 = p[5].parse()?;
-            let minimum: u32 = p[6].parse()?;
+            anyhow::ensure!(p.len() >= 7,
+                "SOA: expected 7 fields (mname rname serial refresh retry expire minimum), got {}",
+                p.len());
+            let mname   = Name::from_str(&ensure_fqdn(p[0])).context("SOA: invalid mname")?;
+            let rname   = Name::from_str(&ensure_fqdn(p[1])).context("SOA: invalid rname")?;
+            let serial:  u32 = p[2].parse().context("SOA: serial must be u32")?;
+            let refresh: i32 = p[3].parse().context("SOA: refresh must be i32")?;
+            let retry:   i32 = p[4].parse().context("SOA: retry must be i32")?;
+            let expire:  i32 = p[5].parse().context("SOA: expire must be i32")?;
+            let minimum: u32 = p[6].parse().context("SOA: minimum must be u32")?;
             RData::SOA(SOA::new(mname, rname, serial, refresh, retry, expire, minimum))
         }
 
-        t => anyhow::bail!("Record type {t:?} is not yet supported in static records"),
+        t => anyhow::bail!(
+            "Record type {t:?} is not supported in static records. \
+             Supported: A, AAAA, CNAME, MX, NS, PTR, TXT, SRV, SOA"
+        ),
     };
 
-    // Build the record.  We must set the type explicitly because Record::new()
-    // initialises rr_type to RecordType::NULL and set_data() does not update it.
+    // We must explicitly set the record type because Record::new() initialises
+    // rr_type to RecordType::NULL and set_data() alone does not update it.
     let mut rec = Record::new();
     rec.set_name(dns_name)
        .set_ttl(ttl)
        .set_dns_class(DNSClass::IN)
-       .set_rr_type(rtype)     // <-- must match the RData variant
+       .set_rr_type(rtype)
        .set_data(Some(rdata));
     Ok(rec)
 }

@@ -21,7 +21,7 @@ pub struct CacheKey {
 
 #[derive(Clone)]
 pub struct CacheEntry {
-    /// Parsed DNS response (we store as Message so TTL patching is easy).
+    /// Parsed DNS response (stored as Message so TTL patching is easy).
     pub message: Message,
     /// Minimum TTL from the answer section at insertion time.
     pub original_ttl: u32,
@@ -29,7 +29,7 @@ pub struct CacheEntry {
     pub inserted_at: Instant,
     /// Wall-clock expiry.
     pub expires_at: Instant,
-    /// True for NXDOMAIN / SERVFAIL entries.
+    /// True for NXDOMAIN / SERVFAIL negative entries.
     pub negative: bool,
 }
 
@@ -56,6 +56,8 @@ pub struct DnsCache {
 
 impl DnsCache {
     pub fn new(cfg: CacheConfig) -> Self {
+        // Pre-size the map to a power-of-two capacity so DashMap's internal
+        // sharding works as efficiently as possible.
         let cap = cfg.max_entries.next_power_of_two();
         Self {
             entries: DashMap::with_capacity(cap),
@@ -72,6 +74,7 @@ impl DnsCache {
         }
         let entry = self.entries.get(key)?;
         if entry.is_expired() {
+            // Drop the shared ref before mutating the map.
             drop(entry);
             self.entries.remove(key);
             return None;
@@ -95,12 +98,13 @@ impl DnsCache {
             self.compute_ttl(&msg)
         };
 
+        // Do not cache zero-TTL records.
         if ttl == 0 {
             return;
         }
 
-        // Soft capacity enforcement: attempt a light sweep before inserting
-        // rather than maintaining an expensive LRU list.
+        // Soft capacity enforcement: evict before inserting rather than
+        // maintaining a costly LRU list.
         if self.entries.len() >= self.cfg.max_entries {
             self.evict();
             if self.entries.len() >= self.cfg.max_entries {
@@ -127,10 +131,6 @@ impl DnsCache {
         self.entries.retain(|_, v| !v.is_expired());
     }
 
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
     // ── Private ───────────────────────────────────────────────────────────
 
     fn compute_ttl(&self, msg: &Message) -> u32 {
@@ -146,6 +146,7 @@ impl DnsCache {
     /// Evict ~1 % of entries, preferring expired ones first.
     fn evict(&self) {
         let target = (self.cfg.max_entries / 100).max(64);
+
         let expired: Vec<_> = self.entries
             .iter()
             .filter(|e| e.is_expired())
@@ -158,7 +159,7 @@ impl DnsCache {
             self.entries.remove(&k);
         }
 
-        // If we didn't find enough expired entries, evict arbitrary live ones.
+        // If not enough expired entries found, evict arbitrary live ones.
         if removed < target {
             let extra: Vec<_> = self.entries
                 .iter()
