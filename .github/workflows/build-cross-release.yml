@@ -1,0 +1,271 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.2.3)"
+        required: true
+        default:  "v0.1.0"
+      prerelease:
+        description: "Mark as pre-release?"
+        required: false
+        default:  "false"
+        type: choice
+        options: ["false", "true"]
+
+# ── Permissions ───────────────────────────────────────────────────────────────
+permissions:
+  contents: write
+
+# ── Concurrency: cancel any existing run for the same tag ─────────────────────
+concurrency:
+  group: release-${{ github.event.inputs.tag }}
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Matrix build
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x86_64 (glibc – most servers) ──────────────────────────
+          - target:  x86_64-unknown-linux-gnu
+            runner:  ubuntu-latest
+            cross:   false
+            archive: tar.gz
+
+          # ── Linux x86_64 (musl – fully static, Alpine / containers) ──────
+          - target:  x86_64-unknown-linux-musl
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+          # ── Linux aarch64 (glibc – AWS Graviton, Raspberry Pi 4/5 64-bit)
+          - target:  aarch64-unknown-linux-gnu
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+          # ── Linux aarch64 (musl – static ARM64) ──────────────────────────
+          - target:  aarch64-unknown-linux-musl
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+          # ── Linux ARMv7 (Raspberry Pi 2/3 32-bit, many routers) ──────────
+          - target:  armv7-unknown-linux-gnueabihf
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+          # ── Linux ARMv7 musl ──────────────────────────────────────────────
+          - target:  armv7-unknown-linux-musleabihf
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+          # ── Linux i686 (32-bit) ───────────────────────────────────────────
+          - target:  i686-unknown-linux-gnu
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+          # ── macOS x86_64 (Intel Mac) ──────────────────────────────────────
+          - target:  x86_64-apple-darwin
+            runner:  macos-15-intel
+            cross:   false
+            archive: tar.gz
+
+          # ── macOS aarch64 (Apple Silicon / M-series) ──────────────────────
+          - target:  aarch64-apple-darwin
+            runner:  macos-latest
+            cross:   false
+            archive: tar.gz
+
+          # ── Windows x86_64 (MSVC) ─────────────────────────────────────────
+          - target:  x86_64-pc-windows-msvc
+            runner:  windows-latest
+            cross:   false
+            archive: zip
+            ext:     .exe
+
+          # ── Windows i686 (MSVC) ───────────────────────────────────────────
+          - target:  i686-pc-windows-msvc
+            runner:  windows-latest
+            cross:   false
+            archive: zip
+            ext:     .exe
+
+          # ── Windows aarch64 (MSVC) ────────────────────────────────────────
+          - target:  aarch64-pc-windows-msvc
+            runner:  windows-latest
+            cross:   false
+            archive: zip
+            ext:     .exe
+
+          # ── FreeBSD x86_64 ────────────────────────────────────────────────
+          - target:  x86_64-unknown-freebsd
+            runner:  ubuntu-latest
+            cross:   true
+            archive: tar.gz
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Rust toolchain ──────────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # ── Cache compiled dependencies ─────────────────────────────────────────
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      # ── Install cross (Linux cross-compilation) ────────────────────────────
+      - name: Install cross
+        if: matrix.cross == true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      # ── Build (native) ──────────────────────────────────────────────────────
+      - name: Build (native)
+        if: matrix.cross == false
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TERM_COLOR: always
+
+      # ── Build (cross) ───────────────────────────────────────────────────────
+      - name: Build (cross)
+        if: matrix.cross == true
+        run: cross build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TERM_COLOR: always
+
+      # ── Stage artefact directory ─────────────────────────────────────────────
+      - name: Prepare artefact directory (Unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          ARTIFACT_DIR="veldns-${{ github.event.inputs.tag }}-${{ matrix.target }}"
+          mkdir -p "$ARTIFACT_DIR"
+
+          # Binary
+          cp "target/${{ matrix.target }}/release/veldns" "$ARTIFACT_DIR/veldns"
+          chmod +x "$ARTIFACT_DIR/veldns"
+
+          # Companion files
+          cp README.md         "$ARTIFACT_DIR/README.md"
+          cp config.toml       "$ARTIFACT_DIR/config.toml.example"
+          cp static_records.csv "$ARTIFACT_DIR/static_records.csv.example"
+
+          # Create archive
+          tar -czf "${ARTIFACT_DIR}.tar.gz" "$ARTIFACT_DIR"
+          echo "ARTIFACT=${ARTIFACT_DIR}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Prepare artefact directory (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $dir = "veldns-${{ github.event.inputs.tag }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $dir
+
+          Copy-Item "target\${{ matrix.target }}\release\veldns.exe"  "$dir\veldns.exe"
+          Copy-Item "README.md"          "$dir\README.md"
+          Copy-Item "config.toml"        "$dir\config.toml.example"
+          Copy-Item "static_records.csv" "$dir\static_records.csv.example"
+
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+          echo "ARTIFACT=$dir.zip" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ── Upload artefact to workflow run (for inspection) ───────────────────
+      - name: Upload build artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veldns-${{ github.event.inputs.tag }}-${{ matrix.target }}
+          path: ${{ env.ARTIFACT }}
+          retention-days: 7
+
+  # ── Create / update GitHub Release ──────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List artefacts
+        run: find dist/ -type f | sort
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ github.event.inputs.tag }}
+          name:       "VelDNS ${{ github.event.inputs.tag }}"
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: dist/**/*
+          body: |
+            ## VelDNS ${{ github.event.inputs.tag }}
+
+            ### Installation
+
+            Download the archive for your platform, extract it, and run:
+
+            ```bash
+            # Linux / macOS
+            sudo cp veldns /usr/local/bin/
+            sudo veldns --config /etc/veldns/config.toml
+
+            # Windows (run as Administrator)
+            veldns.exe --config C:\veldns\config.toml
+            ```
+
+            ### Platforms
+
+            | Archive | Target |
+            |---------|--------|
+            | `*-x86_64-unknown-linux-gnu.tar.gz`      | Linux x86-64 (glibc)        |
+            | `*-x86_64-unknown-linux-musl.tar.gz`     | Linux x86-64 (static/musl)  |
+            | `*-aarch64-unknown-linux-gnu.tar.gz`     | Linux ARM64 (glibc)         |
+            | `*-aarch64-unknown-linux-musl.tar.gz`    | Linux ARM64 (static/musl)   |
+            | `*-armv7-unknown-linux-gnueabihf.tar.gz` | Linux ARMv7                 |
+            | `*-i686-unknown-linux-gnu.tar.gz`        | Linux i686 32-bit           |
+            | `*-x86_64-apple-darwin.tar.gz`           | macOS Intel                 |
+            | `*-aarch64-apple-darwin.tar.gz`          | macOS Apple Silicon         |
+            | `*-x86_64-pc-windows-msvc.zip`           | Windows x86-64              |
+            | `*-i686-pc-windows-msvc.zip`             | Windows i686 32-bit         |
+            | `*-aarch64-pc-windows-msvc.zip`          | Windows ARM64               |
+            | `*-x86_64-unknown-freebsd.tar.gz`        | FreeBSD x86-64              |
+
+            Each archive contains:
+            - `veldns` binary (or `veldns.exe` on Windows)
+            - `README.md`
+            - `config.toml.example`
+            - `static_records.csv.example`
