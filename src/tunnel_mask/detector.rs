@@ -7,22 +7,22 @@ use super::config::TunnelMaskConfig;
 
 /// Subset of config fields used by the detector.
 pub struct DetectorConfig {
-    pub known_tunnel_zones:        Vec<String>,
-    pub auto_detect:               bool,
-    pub qname_len_threshold:       usize,
-    pub label_len_threshold:       usize,
-    pub entropy_threshold:         f64,
+    pub known_tunnel_zones: Vec<String>,
+    pub auto_detect: bool,
+    pub qname_len_threshold: usize,
+    pub label_len_threshold: usize,
+    pub entropy_threshold: f64,
     pub base32_fraction_threshold: f64,
 }
 
 impl From<&TunnelMaskConfig> for DetectorConfig {
     fn from(c: &TunnelMaskConfig) -> Self {
         Self {
-            known_tunnel_zones:        c.known_tunnel_zones.clone(),
-            auto_detect:               c.auto_detect,
-            qname_len_threshold:       c.qname_len_threshold,
-            label_len_threshold:       c.label_len_threshold,
-            entropy_threshold:         c.entropy_threshold,
+            known_tunnel_zones: c.known_tunnel_zones.clone(),
+            auto_detect: c.auto_detect,
+            qname_len_threshold: c.qname_len_threshold,
+            label_len_threshold: c.label_len_threshold,
+            entropy_threshold: c.entropy_threshold,
             base32_fraction_threshold: c.base32_fraction_threshold,
         }
     }
@@ -36,10 +36,12 @@ pub fn is_tunnel_query(qname: &str, qtype: u16, cfg: &DetectorConfig) -> bool {
     // ── Rule: known tunnel zone suffix ────────────────────────────────
     for zone in &cfg.known_tunnel_zones {
         let z = zone.to_lowercase();
-        let suffix = if z.starts_with('.') { z.clone() } else { format!(".{z}") };
-        if qname_lower.ends_with(&suffix)
-            || qname_lower == z.trim_start_matches('.')
-        {
+        let suffix = if z.starts_with('.') {
+            z.clone()
+        } else {
+            format!(".{z}")
+        };
+        if qname_lower.ends_with(&suffix) || qname_lower == z.trim_start_matches('.') {
             score += 1;
             break;
         }

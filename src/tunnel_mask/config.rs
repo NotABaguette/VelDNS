@@ -20,7 +20,6 @@ pub struct TunnelMaskConfig {
     pub encoding: String,
 
     // ── Client-only ──────────────────────────────────────────────────
-
     /// Upstream recursive resolver(s) to send masked queries through.
     pub resolver: Vec<String>,
 
@@ -38,7 +37,6 @@ pub struct TunnelMaskConfig {
     pub send_jitter_ms: [u64; 2],
 
     // ── Server-only ─────────────────────────────────────────────────
-
     /// Address of the real dnstt / slipstream server to forward to.
     pub upstream_addr: String,
 
@@ -52,7 +50,6 @@ pub struct TunnelMaskConfig {
     pub response_ttl: u32,
 
     // ── Detection tuning (client only) ──────────────────────────────
-
     /// Known tunnel zone suffixes.  Queries for these zones are always
     /// intercepted (score += 1 per match).
     pub known_tunnel_zones: Vec<String>,
@@ -76,27 +73,27 @@ pub struct TunnelMaskConfig {
 impl Default for TunnelMaskConfig {
     fn default() -> Self {
         Self {
-            enabled:    false,
-            mode:       "client".into(),
+            enabled: false,
+            mode: "client".into(),
             relay_zone: "relay.example.net".into(),
-            encoding:   "hex".into(),
+            encoding: "hex".into(),
 
-            resolver:       vec!["8.8.8.8:53".into()],
+            resolver: vec!["8.8.8.8:53".into()],
             session_ttl_ms: 5000,
-            max_qname_len:  120,
-            label_len:      12,
+            max_qname_len: 120,
+            label_len: 12,
             send_jitter_ms: [3, 15],
 
-            upstream_addr:        "127.0.0.1:5353".into(),
+            upstream_addr: "127.0.0.1:5353".into(),
             max_response_records: 10,
-            dummy_ttl:            60,
-            response_ttl:         30,
+            dummy_ttl: 60,
+            response_ttl: 30,
 
-            known_tunnel_zones:        vec![],
-            auto_detect:               true,
-            qname_len_threshold:       80,
-            label_len_threshold:       30,
-            entropy_threshold:         3.8,
+            known_tunnel_zones: vec![],
+            auto_detect: true,
+            qname_len_threshold: 80,
+            label_len_threshold: 30,
+            entropy_threshold: 3.8,
             base32_fraction_threshold: 0.85,
         }
     }

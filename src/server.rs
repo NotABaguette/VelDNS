@@ -21,21 +21,24 @@ use tracing::{error, info, warn};
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn run(
-    cfg:         Config,
-    store:       Arc<StaticStore>,
-    cache:       Arc<DnsCache>,
-    metrics:     Arc<Metrics>,
-    pool:        Arc<UpstreamPool>,
+    cfg: Config,
+    store: Arc<StaticStore>,
+    cache: Arc<DnsCache>,
+    metrics: Arc<Metrics>,
+    pool: Arc<UpstreamPool>,
     tunnel_mask: Arc<TunnelMask>,
 ) -> Result<()> {
-    let cfg     = Arc::new(cfg);
+    let cfg = Arc::new(cfg);
     let workers = cfg.worker_count();
 
     // ── Background tasks ─────────────────────────────────────────────
     let cache_bg = cache.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
-        loop { tick.tick().await; cache_bg.purge_expired(); }
+        loop {
+            tick.tick().await;
+            cache_bg.purge_expired();
+        }
     });
 
     tokio::spawn(metrics::reporter(metrics.clone(), Duration::from_secs(30)));
@@ -55,11 +58,11 @@ pub async fn run(
             let sock = Arc::new(UdpSocket::from_std(sock)?);
 
             let h = Handler {
-                cfg:         cfg.clone(),
-                store:       store.clone(),
-                cache:       cache.clone(),
-                pool:        pool.clone(),
-                metrics:     metrics.clone(),
+                cfg: cfg.clone(),
+                store: store.clone(),
+                cache: cache.clone(),
+                pool: pool.clone(),
+                metrics: metrics.clone(),
                 tunnel_mask: tunnel_mask.clone(),
             };
 
@@ -74,11 +77,11 @@ pub async fn run(
             info!("Listening on tcp/{addr}");
 
             let h = Handler {
-                cfg:         cfg.clone(),
-                store:       store.clone(),
-                cache:       cache.clone(),
-                pool:        pool.clone(),
-                metrics:     metrics.clone(),
+                cfg: cfg.clone(),
+                store: store.clone(),
+                cache: cache.clone(),
+                pool: pool.clone(),
+                metrics: metrics.clone(),
                 tunnel_mask: tunnel_mask.clone(),
             };
 
@@ -101,7 +104,7 @@ async fn udp_worker(id: usize, sock: Arc<UdpSocket>, handler: Handler) {
 
     loop {
         let (len, src) = match sock.recv_from(&mut buf).await {
-            Ok(v)  => v,
+            Ok(v) => v,
             Err(e) => {
                 error!("worker-{id} recv error: {e}");
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -110,8 +113,8 @@ async fn udp_worker(id: usize, sock: Arc<UdpSocket>, handler: Handler) {
         };
 
         let query = buf[..len].to_vec();
-        let sock  = sock.clone();
-        let h     = handler.clone();
+        let sock = sock.clone();
+        let h = handler.clone();
 
         tokio::spawn(async move {
             if let Some(resp) = h.handle(&query).await {
@@ -148,18 +151,20 @@ async fn tcp_acceptor(listener: TcpListener, handler: Handler) {
 
 async fn tcp_session(
     mut stream: tokio::net::TcpStream,
-    _src:       SocketAddr,
-    handler:    Handler,
+    _src: SocketAddr,
+    handler: Handler,
 ) -> anyhow::Result<()> {
     loop {
         let mut len_buf = [0u8; 2];
         match stream.read_exact(&mut len_buf).await {
-            Ok(_)  => {}
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => return Err(e.into()),
         }
         let msg_len = u16::from_be_bytes(len_buf) as usize;
-        if msg_len == 0 { continue; }
+        if msg_len == 0 {
+            continue;
+        }
 
         let mut query = vec![0u8; msg_len];
         stream.read_exact(&mut query).await?;
@@ -177,16 +182,28 @@ async fn tcp_session(
 // Socket construction
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn make_udp_socket(addr: SocketAddr, rcvbuf: usize, sndbuf: usize) -> anyhow::Result<std::net::UdpSocket> {
-    let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
-    let sock   = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+fn make_udp_socket(
+    addr: SocketAddr,
+    rcvbuf: usize,
+    sndbuf: usize,
+) -> anyhow::Result<std::net::UdpSocket> {
+    let domain = if addr.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+    let sock = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
 
     sock.set_reuse_address(true)?;
     #[cfg(unix)]
     sock.set_reuse_port(true)?;
 
-    if rcvbuf > 0 { let _ = sock.set_recv_buffer_size(rcvbuf); }
-    if sndbuf > 0 { let _ = sock.set_send_buffer_size(sndbuf); }
+    if rcvbuf > 0 {
+        let _ = sock.set_recv_buffer_size(rcvbuf);
+    }
+    if sndbuf > 0 {
+        let _ = sock.set_send_buffer_size(sndbuf);
+    }
 
     sock.set_nonblocking(true)?;
     sock.bind(&addr.into())?;
@@ -195,8 +212,12 @@ fn make_udp_socket(addr: SocketAddr, rcvbuf: usize, sndbuf: usize) -> anyhow::Re
 }
 
 fn make_tcp_listener(addr: SocketAddr) -> anyhow::Result<std::net::TcpListener> {
-    let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
-    let sock   = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    let domain = if addr.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+    let sock = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
 
     sock.set_reuse_address(true)?;
     #[cfg(unix)]

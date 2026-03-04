@@ -6,12 +6,12 @@ use rand::Rng;
 /// One fragment ready to be encoded into a masked DNS query.
 pub struct FragmentEnvelope {
     pub session_id: u32,
-    pub nonce:      u16,
-    pub seq:        u8,
-    pub total:      u8,
-    pub qtype:      u8,
-    pub is_final:   bool,
-    pub payload:    Vec<u8>,
+    pub nonce: u16,
+    pub seq: u8,
+    pub total: u8,
+    pub qtype: u8,
+    pub is_final: bool,
+    pub payload: Vec<u8>,
 }
 
 impl FragmentEnvelope {
@@ -19,10 +19,10 @@ impl FragmentEnvelope {
     pub fn to_frame(&self) -> Vec<u8> {
         let header = FrameHeader {
             session_id: self.session_id,
-            nonce:      self.nonce,
-            frag_idx:   self.seq,
+            nonce: self.nonce,
+            frag_idx: self.seq,
             frag_total: self.total,
-            qtype:      self.qtype,
+            qtype: self.qtype,
         };
         let hdr = header.encode();
         let mut frame = Vec::with_capacity(HEADER_LEN + self.payload.len());

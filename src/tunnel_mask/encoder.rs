@@ -24,10 +24,10 @@ pub const HEADER_LEN: usize = 10;
 #[derive(Debug, Clone)]
 pub struct FrameHeader {
     pub session_id: u32,
-    pub nonce:      u16,
-    pub frag_idx:   u8,
+    pub nonce: u16,
+    pub frag_idx: u8,
     pub frag_total: u8,
-    pub qtype:      u8,
+    pub qtype: u8,
 }
 
 impl FrameHeader {
@@ -48,10 +48,10 @@ impl FrameHeader {
         }
         Some(Self {
             session_id: u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
-            nonce:      u16::from_be_bytes([data[4], data[5]]),
-            frag_idx:   data[6],
+            nonce: u16::from_be_bytes([data[4], data[5]]),
+            frag_idx: data[6],
             frag_total: data[7],
-            qtype:      data[8],
+            qtype: data[8],
         })
     }
 

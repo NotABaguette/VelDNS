@@ -17,11 +17,11 @@ use tracing::{debug, trace, warn};
 
 #[derive(Clone)]
 pub struct Handler {
-    pub cfg:         Arc<Config>,
-    pub store:       Arc<StaticStore>,
-    pub cache:       Arc<DnsCache>,
-    pub pool:        Arc<UpstreamPool>,
-    pub metrics:     Arc<Metrics>,
+    pub cfg: Arc<Config>,
+    pub store: Arc<StaticStore>,
+    pub cache: Arc<DnsCache>,
+    pub pool: Arc<UpstreamPool>,
+    pub metrics: Arc<Metrics>,
     pub tunnel_mask: Arc<TunnelMask>,
 }
 
@@ -32,7 +32,7 @@ impl Handler {
 
         // ── Parse ─────────────────────────────────────────────────────────
         let msg = match Message::from_vec(raw) {
-            Ok(m)  => m,
+            Ok(m) => m,
             Err(e) => {
                 trace!("parse error: {e}");
                 self.metrics.queries_failed();
@@ -50,12 +50,13 @@ impl Handler {
         }
 
         let q = msg.queries().first()?.clone();
-        let qname  = q.name().to_lowercase();
-        let qtype  = q.query_type();
+        let qname = q.name().to_lowercase();
+        let qtype = q.query_type();
         let name_s = qname.to_string();
-        let name   = name_s.trim_end_matches('.');
+        let name = name_s.trim_end_matches('.');
 
-        let do_bit = msg.extensions()
+        let do_bit = msg
+            .extensions()
             .as_ref()
             .map(|e| e.dnssec_ok())
             .unwrap_or(false);
@@ -65,12 +66,11 @@ impl Handler {
         }
 
         // ── Tunnel Mask intercept (BEFORE static / cache / upstream) ──
-        if let Some(response) = self.tunnel_mask.handle_query(
-            name,
-            u16::from(qtype),
-            msg.id(),
-            raw,
-        ).await {
+        if let Some(response) = self
+            .tunnel_mask
+            .handle_query(name, u16::from(qtype), msg.id(), raw)
+            .await
+        {
             self.metrics.add_bytes_tx(response.len() as u64);
             return Some(response);
         }
@@ -89,7 +89,11 @@ impl Handler {
         }
 
         // ── 2. Cache ──────────────────────────────────────────────────
-        let key = CacheKey { name: name.to_string(), rtype: qtype, dnssec: do_bit };
+        let key = CacheKey {
+            name: name.to_string(),
+            rtype: qtype,
+            dnssec: do_bit,
+        };
 
         if let Some(entry) = self.cache.get(&key) {
             self.metrics.queries_cached();
@@ -142,10 +146,10 @@ impl Handler {
 
     fn build_static_response(
         &self,
-        q:        &Message,
-        answers:  Vec<Record>,
+        q: &Message,
+        answers: Vec<Record>,
         nxdomain: bool,
-        do_bit:   bool,
+        do_bit: bool,
     ) -> Message {
         let mut r = Message::new();
         r.set_id(q.id());
@@ -154,12 +158,18 @@ impl Handler {
         r.set_authoritative(self.cfg.static_records.authoritative);
         r.set_recursion_desired(q.recursion_desired());
         r.set_recursion_available(true);
-        r.set_response_code(
-            if nxdomain { ResponseCode::NXDomain } else { ResponseCode::NoError }
-        );
+        r.set_response_code(if nxdomain {
+            ResponseCode::NXDomain
+        } else {
+            ResponseCode::NoError
+        });
 
-        for query in q.queries() { r.add_query(query.clone()); }
-        for ans in answers        { r.add_answer(ans); }
+        for query in q.queries() {
+            r.add_query(query.clone());
+        }
+        for ans in answers {
+            r.add_answer(ans);
+        }
 
         let mut edns = Edns::new();
         edns.set_dnssec_ok(do_bit && self.cfg.dnssec.enabled);
@@ -176,7 +186,9 @@ impl Handler {
         r.set_recursion_available(true);
         r.set_recursion_desired(q.recursion_desired());
         r.set_response_code(ResponseCode::ServFail);
-        for query in q.queries() { r.add_query(query.clone()); }
+        for query in q.queries() {
+            r.add_query(query.clone());
+        }
         r.to_vec().unwrap_or_default()
     }
 
@@ -201,9 +213,15 @@ impl Handler {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn patch_ttls(msg: &mut Message, remaining: u32) {
-    for r in msg.answers_mut()      { r.set_ttl(r.ttl().min(remaining)); }
-    for r in msg.name_servers_mut() { r.set_ttl(r.ttl().min(remaining)); }
-    for r in msg.additionals_mut()  { r.set_ttl(r.ttl().min(remaining)); }
+    for r in msg.answers_mut() {
+        r.set_ttl(r.ttl().min(remaining));
+    }
+    for r in msg.name_servers_mut() {
+        r.set_ttl(r.ttl().min(remaining));
+    }
+    for r in msg.additionals_mut() {
+        r.set_ttl(r.ttl().min(remaining));
+    }
 }
 
 fn ensure_do_bit(raw: &[u8], payload: u16) -> Vec<u8> {
