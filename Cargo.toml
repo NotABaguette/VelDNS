@@ -18,7 +18,6 @@ tokio = { version = "1", features = ["full"] }
 
 # DNS protocol handling (hickory-dns / formerly trust-dns)
 hickory-proto    = { version = "0.24", features = ["dnssec-ring"] }
-hickory-resolver = { version = "0.24", features = ["tokio-runtime", "dnssec-ring"] }
 
 # Concurrent data structures (lock-free)
 dashmap    = "5"
