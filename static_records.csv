@@ -1,0 +1,55 @@
+# VelDNS static record overrides
+#
+# Format:  domain,type,ttl,value
+#
+# These domains are NEVER forwarded to upstream resolvers.
+# Responses are authoritative (AA bit set).
+#
+# Supported types and their value formats:
+#   A      → IPv4 address                             e.g.  192.168.1.10
+#   AAAA   → IPv6 address                             e.g.  fd00::1
+#   CNAME  → canonical name (FQDN, trailing dot OK)   e.g.  target.example.com.
+#   MX     → "priority exchange"                      e.g.  10 mail.example.com.
+#   NS     → name server FQDN                         e.g.  ns1.example.com.
+#   PTR    → pointer FQDN                             e.g.  host.example.com.
+#   TXT    → text; separate multiple strings with |   e.g.  v=spf1 ~all
+#   SRV    → "priority weight port target"            e.g.  10 20 443 svc.example.com.
+#   SOA    → "mname rname serial refresh retry expire minimum"
+#
+domain,type,ttl,value
+
+# ── Internal hosts ────────────────────────────────────────────────────────────
+router.home,A,300,192.168.1.1
+nas.home,A,300,192.168.1.20
+printer.home,A,300,192.168.1.30
+desktop.home,A,300,192.168.1.50
+
+# ── Internal services (IPv6) ──────────────────────────────────────────────────
+nas.home,AAAA,300,fd00::20
+
+# ── CNAME aliases ─────────────────────────────────────────────────────────────
+files.home,CNAME,300,nas.home.
+backup.home,CNAME,300,nas.home.
+
+# ── Local mail ────────────────────────────────────────────────────────────────
+home,MX,3600,10 router.home.
+
+# ── TXT records ───────────────────────────────────────────────────────────────
+home,TXT,3600,v=spf1 mx ~all
+
+# ── Service discovery (SRV) ───────────────────────────────────────────────────
+_http._tcp.nas.home,SRV,300,10 20 80 nas.home.
+_https._tcp.nas.home,SRV,300,10 20 443 nas.home.
+
+# ── Reverse DNS (PTR) ─────────────────────────────────────────────────────────
+1.1.168.192.in-addr.arpa,PTR,300,router.home.
+20.1.168.192.in-addr.arpa,PTR,300,nas.home.
+
+# ── Block list (return 0.0.0.0 for unwanted domains) ─────────────────────────
+ads.example.com,A,60,0.0.0.0
+tracker.example.com,A,60,0.0.0.0
+tracker.example.com,AAAA,60,::
+
+# ── Split-horizon (different answer than public DNS) ──────────────────────────
+# Example: resolve api.mycompany.com to internal address inside your network
+api.mycompany.com,A,60,10.0.0.5

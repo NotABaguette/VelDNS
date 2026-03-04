@@ -1,0 +1,102 @@
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║                       VelDNS  –  config.toml                           ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# All fields have sensible defaults; you only need to override what differs
+# from the defaults in your environment.
+
+# ── Server ────────────────────────────────────────────────────────────────────
+[server]
+# Addresses (and ports) to listen on.
+# Uncomment the IPv6 line to serve dual-stack.
+bind = [
+    "0.0.0.0:53",
+    # "[::]:53",
+]
+
+# Worker threads per bind address.
+# 0 = auto-detect (one thread per logical CPU core – recommended).
+workers = 0
+
+# Maximum UDP payload size advertised in EDNS0.
+# 4096 bytes is a safe choice for almost every network path.
+max_udp_payload = 4096
+
+# Also accept DNS-over-TCP (needed for large responses and zone transfers).
+tcp = true
+
+# Increase these on very high-traffic servers (bytes; 0 = OS default).
+recv_buf = 0
+send_buf = 0
+
+
+# ── Upstream / forwarding ─────────────────────────────────────────────────────
+[upstream]
+# Primary resolvers – queried first.
+# With parallel = true (default), all primaries are queried simultaneously
+# and the fastest response wins.
+primary = [
+    "8.8.8.8:53",   # Google Public DNS
+    "8.8.4.4:53",   # Google Public DNS
+]
+
+# Fallback resolvers – used only when every primary fails.
+fallback = [
+    "1.1.1.1:53",   # Cloudflare DNS
+    "1.0.0.1:53",   # Cloudflare DNS
+    "9.9.9.9:53",   # Quad9
+]
+
+# Per-server response timeout in milliseconds.
+timeout_ms = 3000
+
+# Retry attempts per server before giving up.
+retries = 2
+
+# Query all primary servers at once and return the fastest response.
+# Slightly increases upstream load but dramatically cuts tail latency.
+parallel = true
+
+
+# ── In-memory response cache ──────────────────────────────────────────────────
+[cache]
+enabled     = true
+max_entries = 1_000_000   # ~100–300 MB depending on record size
+
+# TTL floor: don't cache entries for less than 30 s (protects against floods).
+min_ttl = 30
+
+# TTL ceiling: never cache beyond one day.
+max_ttl = 86400
+
+# Cache time for NXDOMAIN / SERVFAIL responses.
+negative_ttl = 300
+
+
+# ── DNSSEC ────────────────────────────────────────────────────────────────────
+[dnssec]
+# Forward DNSSEC records transparently and set the DO bit in upstream queries.
+enabled = true
+
+# Full chain-of-trust validation (RRSIG / DNSKEY verification).
+# Adds a small latency overhead; disable if your upstream already validates.
+validate = false
+
+
+# ── Static record overrides ────────────────────────────────────────────────────
+[static_records]
+# Path to the CSV file.  Relative paths are resolved from the working directory.
+file = "static_records.csv"
+
+# Mark responses for static domains as Authoritative (AA = 1).
+authoritative = true
+
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+[logging]
+# One of: trace | debug | info | warn | error
+# Override at runtime: VELDNS_LOG=debug veldns
+level = "info"
+
+# Log every individual DNS query.  Very noisy; only enable for debugging.
+log_queries = false
