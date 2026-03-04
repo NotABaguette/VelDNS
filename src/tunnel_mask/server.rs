@@ -5,8 +5,8 @@ use super::config::TunnelMaskConfig;
 use super::encoder::{self, MaskEncoder};
 use dashmap::DashMap;
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
-use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
 use hickory_proto::rr::rdata::AAAA;
+use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
 use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,8 +18,8 @@ use tracing::{debug, warn};
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct ReassemblySession {
-    fragments:      Vec<Option<Vec<u8>>>,
-    total:          u8,
+    fragments: Vec<Option<Vec<u8>>>,
+    total: u8,
     received_count: u8,
     pub(crate) created_at: Instant,
 }
@@ -27,10 +27,10 @@ pub struct ReassemblySession {
 impl ReassemblySession {
     fn new(total: u8) -> Self {
         Self {
-            fragments:      vec![None; total as usize],
+            fragments: vec![None; total as usize],
             total,
             received_count: 0,
-            created_at:     Instant::now(),
+            created_at: Instant::now(),
         }
     }
 
@@ -53,8 +53,8 @@ impl ReassemblySession {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct ServerRelay {
-    pub(crate) cfg:      TunnelMaskConfig,
-    encoder:             Box<dyn MaskEncoder>,
+    pub(crate) cfg: TunnelMaskConfig,
+    encoder: Box<dyn MaskEncoder>,
     pub(crate) sessions: Arc<DashMap<u32, ReassemblySession>>,
 }
 
@@ -79,7 +79,7 @@ impl ServerRelay {
     ) -> Option<Vec<u8>> {
         // ── 1. Does the query target our relay zone? ─────────────────
         let rz = self.cfg.relay_zone.to_lowercase();
-        let q  = qname.to_lowercase();
+        let q = qname.to_lowercase();
         if !q.ends_with(&format!(".{rz}")) && q != rz {
             return None;
         }
@@ -99,13 +99,13 @@ impl ServerRelay {
 
         let header = match encoder::FrameHeader::decode(&frame_bytes) {
             Some(h) => h,
-            None    => return self.build_dummy_response(raw_query),
+            None => return self.build_dummy_response(raw_query),
         };
         let payload = frame_bytes[encoder::HEADER_LEN..].to_vec();
 
-        let sid      = header.session_id;
-        let idx      = header.frag_idx as usize;
-        let total    = header.frag_total;
+        let sid = header.session_id;
+        let idx = header.frag_idx as usize;
+        let total = header.frag_total;
         let is_final = header.is_final();
 
         debug!(
@@ -117,7 +117,8 @@ impl ServerRelay {
 
         // ── 3. Insert fragment ───────────────────────────────────────
         {
-            let mut entry = self.sessions
+            let mut entry = self
+                .sessions
                 .entry(sid)
                 .or_insert_with(|| ReassemblySession::new(total));
             if idx < entry.fragments.len() && entry.fragments[idx].is_none() {
@@ -134,11 +135,14 @@ impl ServerRelay {
         // ── 5. Final → wait for completion, then reassemble ──────────
         let deadline = Instant::now() + Duration::from_millis(50);
         loop {
-            let complete = self.sessions
+            let complete = self
+                .sessions
                 .get(&sid)
                 .map(|s| s.is_complete())
                 .unwrap_or(false);
-            if complete { break; }
+            if complete {
+                break;
+            }
             if Instant::now() >= deadline {
                 warn!("tunnel_mask server: incomplete session {sid:#010x}, timed out");
                 self.sessions.remove(&sid);
@@ -169,7 +173,10 @@ impl ServerRelay {
 
         match tunnel_response {
             Some(resp) => {
-                debug!("tunnel_mask server: tunnel responded with {} bytes", resp.len());
+                debug!(
+                    "tunnel_mask server: tunnel responded with {} bytes",
+                    resp.len()
+                );
                 self.build_data_response(raw_query, &resp)
             }
             None => self.build_servfail(raw_query),
@@ -185,9 +192,8 @@ impl ServerRelay {
             loop {
                 tick.tick().await;
                 let now = Instant::now();
-                sessions.retain(|_, v| {
-                    now.duration_since(v.created_at).as_millis() < ttl_ms as u128
-                });
+                sessions
+                    .retain(|_, v| now.duration_since(v.created_at).as_millis() < ttl_ms as u128);
             }
         });
     }
@@ -196,8 +202,11 @@ impl ServerRelay {
 
     async fn forward_to_tunnel_server(&self, query: &[u8]) -> Option<Vec<u8>> {
         let upstream: SocketAddr = match self.cfg.upstream_addr.parse() {
-            Ok(a)  => a,
-            Err(e) => { warn!("tunnel_mask server: bad upstream_addr: {e}"); return None; }
+            Ok(a) => a,
+            Err(e) => {
+                warn!("tunnel_mask server: bad upstream_addr: {e}");
+                return None;
+            }
         };
         let bind: SocketAddr = if upstream.is_ipv4() {
             ([0u8; 4], 0u16).into()
@@ -210,8 +219,14 @@ impl ServerRelay {
         let mut buf = vec![0u8; 4096];
         match tokio::time::timeout(Duration::from_millis(4000), sock.recv_from(&mut buf)).await {
             Ok(Ok((len, _))) => Some(buf[..len].to_vec()),
-            Ok(Err(e)) => { warn!("tunnel_mask server: tunnel recv: {e}"); None }
-            Err(_)     => { warn!("tunnel_mask server: tunnel timeout"); None }
+            Ok(Err(e)) => {
+                warn!("tunnel_mask server: tunnel recv: {e}");
+                None
+            }
+            Err(_) => {
+                warn!("tunnel_mask server: tunnel timeout");
+                None
+            }
         }
     }
 
@@ -230,15 +245,17 @@ impl ServerRelay {
         resp.set_authoritative(true);
         resp.set_recursion_available(false);
         resp.set_response_code(ResponseCode::NoError);
-        for q in msg.queries() { resp.add_query(q.clone()); }
+        for q in msg.queries() {
+            resp.add_query(q.clone());
+        }
 
         let addr: Ipv6Addr = "fd09:b7e2:4a31::1".parse().unwrap();
         let mut rec = Record::new();
         rec.set_name(qname)
-           .set_ttl(self.cfg.dummy_ttl)
-           .set_dns_class(DNSClass::IN)
-           .set_rr_type(RecordType::AAAA)
-           .set_data(Some(RData::AAAA(AAAA(addr))));
+            .set_ttl(self.cfg.dummy_ttl)
+            .set_dns_class(DNSClass::IN)
+            .set_rr_type(RecordType::AAAA)
+            .set_data(Some(RData::AAAA(AAAA(addr))));
         resp.add_answer(rec);
 
         resp.to_vec().ok()
@@ -247,11 +264,7 @@ impl ServerRelay {
     /// Pack the tunnel response bytes into AAAA records.
     ///
     /// Layout: `[u16 BE length] [data] [zero pad to mod 16]`
-    fn build_data_response(
-        &self,
-        raw_query: &[u8],
-        tunnel_resp: &[u8],
-    ) -> Option<Vec<u8>> {
+    fn build_data_response(&self, raw_query: &[u8], tunnel_resp: &[u8]) -> Option<Vec<u8>> {
         let msg = Message::from_vec(raw_query).ok()?;
         let qname = msg.queries().first()?.name().clone();
 
@@ -278,7 +291,9 @@ impl ServerRelay {
         resp.set_authoritative(true);
         resp.set_recursion_available(false);
         resp.set_response_code(ResponseCode::NoError);
-        for q in msg.queries() { resp.add_query(q.clone()); }
+        for q in msg.queries() {
+            resp.add_query(q.clone());
+        }
 
         for chunk in payload.chunks(16).take(self.cfg.max_response_records) {
             let mut octets = [0u8; 16];
@@ -286,10 +301,10 @@ impl ServerRelay {
             let addr = Ipv6Addr::from(octets);
             let mut rec = Record::new();
             rec.set_name(qname.clone())
-               .set_ttl(self.cfg.response_ttl)
-               .set_dns_class(DNSClass::IN)
-               .set_rr_type(RecordType::AAAA)
-               .set_data(Some(RData::AAAA(AAAA(addr))));
+                .set_ttl(self.cfg.response_ttl)
+                .set_dns_class(DNSClass::IN)
+                .set_rr_type(RecordType::AAAA)
+                .set_data(Some(RData::AAAA(AAAA(addr))));
             resp.add_answer(rec);
         }
 
@@ -304,7 +319,9 @@ impl ServerRelay {
         resp.set_op_code(OpCode::Query);
         resp.set_recursion_available(false);
         resp.set_response_code(ResponseCode::ServFail);
-        for q in msg.queries() { resp.add_query(q.clone()); }
+        for q in msg.queries() {
+            resp.add_query(q.clone());
+        }
         resp.to_vec().ok()
     }
 }
