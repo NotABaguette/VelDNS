@@ -206,6 +206,7 @@ impl TunnelMaskConfig {
     /// total_bytes = floor(hex_chars / 2)
     /// payload    = total_bytes − 10                          (10-byte frame header)
     /// ```
+    #[allow(dead_code)]
     pub fn bytes_per_fragment_hex(&self) -> usize {
         let zone_len       = self.relay_zone.trim_matches('.').len();
         let label_with_dot = self.label_len + 1;
@@ -225,6 +226,7 @@ impl TunnelMaskConfig {
     /// each pair label ≤ 21 chars (+1 dot separator = 22)
     /// each pair encodes 6 bytes
     /// ```
+    #[allow(dead_code)]
     pub fn bytes_per_fragment_syllable(&self) -> usize {
         const METADATA_WITH_DOT: usize = 23; // 22 chars + leading dot
         const PAIR_WITH_DOT:     usize = 22; // 21 chars max + dot
@@ -240,6 +242,7 @@ impl TunnelMaskConfig {
     }
 
     /// Maximum raw payload bytes per fragment for the configured encoding mode.
+    #[allow(dead_code)]
     pub fn bytes_per_fragment(&self) -> usize {
         match self.encoding {
             EncodingMode::Hex      => self.bytes_per_fragment_hex(),

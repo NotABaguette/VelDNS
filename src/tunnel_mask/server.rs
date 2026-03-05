@@ -38,7 +38,7 @@ use crate::tunnel_mask::fragmenter::new_session_id;
 // Reassembly session
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct ReassemblySession {
+pub(crate) struct ReassemblySession {
     /// Per-index slot for each fragment's raw payload bytes.
     fragments:  Vec<Option<Vec<u8>>>,
     /// Total expected fragment count (from the first-received frame header).
