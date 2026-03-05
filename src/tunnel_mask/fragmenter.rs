@@ -42,6 +42,7 @@ pub struct FragmentEnvelope {
     pub total: u8,
 
     /// `true` when this is the last fragment (`seq + 1 == total`).
+    #[allow(dead_code)]
     pub is_final: bool,
 
     /// Original DNS QTYPE of the intercepted tunnel query (e.g. 16 = TXT).
