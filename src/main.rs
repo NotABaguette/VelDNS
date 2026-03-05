@@ -4,7 +4,6 @@ mod handler;
 mod metrics;
 mod server;
 mod static_store;
-mod tunnel_mask;
 mod upstream;
 
 use anyhow::Result;
@@ -12,7 +11,6 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
-use tunnel_mask::TunnelMask;
 
 /// VelDNS – High-performance DNS server
 ///
@@ -71,12 +69,10 @@ async fn main() -> Result<()> {
     let static_store = static_store::StaticStore::load(&cfg.static_records.file)?;
 
     // ── Shared state ─────────────────────────────────────────────────────────
-    let cache = Arc::new(cache::DnsCache::new(cfg.cache.clone()));
-    let metrics = Arc::new(metrics::Metrics::new());
+    let cache    = Arc::new(cache::DnsCache::new(cfg.cache.clone()));
+    let metrics  = Arc::new(metrics::Metrics::new());
     let upstream = Arc::new(upstream::UpstreamPool::new(cfg.upstream.clone())?);
-    let tunnel_mask = Arc::new(TunnelMask::new(&cfg.tunnel_mask));
-    tunnel_mask.spawn_eviction_task();
 
     // ── Run ──────────────────────────────────────────────────────────────────
-    server::run(cfg, static_store, cache, metrics, upstream, tunnel_mask).await
+    server::run(cfg, static_store, cache, metrics, upstream).await
 }

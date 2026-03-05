@@ -13,8 +13,8 @@
 //!   fragments, forwards the original query to the real tunnel server, packs
 //!   the tunnel response into AAAA records.
 
-mod client;
 pub mod config;
+mod client;
 mod detector;
 mod encoder;
 mod fragmenter;
@@ -45,22 +45,16 @@ impl TunnelMask {
     /// Build a `TunnelMask` from configuration.
     pub fn new(cfg: &TunnelMaskConfig) -> Self {
         if !cfg.enabled {
-            return Self {
-                inner: MaskInner::Disabled,
-            };
+            return Self { inner: MaskInner::Disabled };
         }
 
         // Select encoder (hex is default; syllable is a TODO placeholder)
         let encoder: Box<dyn encoder::MaskEncoder> = match cfg.encoding.as_str() {
             "syllable" => {
                 warn!("tunnel_mask: syllable encoding is not yet implemented – using hex");
-                Box::new(HexEncoder {
-                    label_len: cfg.label_len,
-                })
+                Box::new(HexEncoder { label_len: cfg.label_len })
             }
-            _ => Box::new(HexEncoder {
-                label_len: cfg.label_len,
-            }),
+            _ => Box::new(HexEncoder { label_len: cfg.label_len }),
         };
 
         match cfg.node_mode() {
@@ -70,7 +64,10 @@ impl TunnelMask {
                     cfg.relay_zone, cfg.resolver,
                 );
                 Self {
-                    inner: MaskInner::Client(client::ClientRelay::new(cfg.clone(), encoder)),
+                    inner: MaskInner::Client(client::ClientRelay::new(
+                        cfg.clone(),
+                        encoder,
+                    )),
                 }
             }
             NodeMode::Server => {
@@ -79,7 +76,10 @@ impl TunnelMask {
                     cfg.relay_zone, cfg.upstream_addr,
                 );
                 Self {
-                    inner: MaskInner::Server(server::ServerRelay::new(cfg.clone(), encoder)),
+                    inner: MaskInner::Server(server::ServerRelay::new(
+                        cfg.clone(),
+                        encoder,
+                    )),
                 }
             }
         }
@@ -98,9 +98,9 @@ impl TunnelMask {
         raw_query: &[u8],
     ) -> Option<Vec<u8>> {
         match &self.inner {
-            MaskInner::Disabled => None,
-            MaskInner::Client(c) => c.handle_query(qname, qtype, dns_id, raw_query).await,
-            MaskInner::Server(s) => s.handle_query(qname, qtype, dns_id, raw_query).await,
+            MaskInner::Disabled    => None,
+            MaskInner::Client(c)   => c.handle_query(qname, qtype, dns_id, raw_query).await,
+            MaskInner::Server(s)   => s.handle_query(qname, qtype, dns_id, raw_query).await,
         }
     }
 
