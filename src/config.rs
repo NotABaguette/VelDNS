@@ -10,25 +10,25 @@ use std::path::Path;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
-    pub server:         ServerConfig,
-    pub upstream:       UpstreamConfig,
-    pub cache:          CacheConfig,
-    pub dnssec:         DnssecConfig,
+    pub server: ServerConfig,
+    pub upstream: UpstreamConfig,
+    pub cache: CacheConfig,
+    pub dnssec: DnssecConfig,
     pub static_records: StaticConfig,
-    pub logging:        LoggingConfig,
-    pub tunnel_mask:    TunnelMaskConfig,
+    pub logging: LoggingConfig,
+    pub tunnel_mask: TunnelMaskConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            server:         ServerConfig::default(),
-            upstream:       UpstreamConfig::default(),
-            cache:          CacheConfig::default(),
-            dnssec:         DnssecConfig::default(),
+            server: ServerConfig::default(),
+            upstream: UpstreamConfig::default(),
+            cache: CacheConfig::default(),
+            dnssec: DnssecConfig::default(),
             static_records: StaticConfig::default(),
-            logging:        LoggingConfig::default(),
-            tunnel_mask:    TunnelMaskConfig::default(),
+            logging: LoggingConfig::default(),
+            tunnel_mask: TunnelMaskConfig::default(),
         }
     }
 }
@@ -51,12 +51,12 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            bind:            vec!["0.0.0.0:5353".to_string()],
-            workers:         0,
+            bind: vec!["0.0.0.0:5353".to_string()],
+            workers: 0,
             max_udp_payload: 4096,
-            tcp:             true,
-            recv_buf:        0,
-            send_buf:        0,
+            tcp: true,
+            recv_buf: 0,
+            send_buf: 0,
         }
     }
 }
@@ -78,11 +78,11 @@ pub struct UpstreamConfig {
 impl Default for UpstreamConfig {
     fn default() -> Self {
         Self {
-            primary:    vec!["8.8.8.8:53".into(), "8.8.4.4:53".into()],
-            fallback:   vec!["1.1.1.1:53".into(), "1.0.0.1:53".into()],
+            primary: vec!["8.8.8.8:53".into(), "8.8.4.4:53".into()],
+            fallback: vec!["1.1.1.1:53".into(), "1.0.0.1:53".into()],
             timeout_ms: 3_000,
-            retries:    2,
-            parallel:   true,
+            retries: 2,
+            parallel: true,
         }
     }
 }
@@ -104,10 +104,10 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            enabled:      true,
-            max_entries:  1_000_000,
-            min_ttl:      30,
-            max_ttl:      86_400,
+            enabled: true,
+            max_entries: 1_000_000,
+            min_ttl: 30,
+            max_ttl: 86_400,
             negative_ttl: 300,
         }
     }
@@ -126,7 +126,10 @@ pub struct DnssecConfig {
 
 impl Default for DnssecConfig {
     fn default() -> Self {
-        Self { enabled: true, validate: false }
+        Self {
+            enabled: true,
+            validate: false,
+        }
     }
 }
 
@@ -143,7 +146,10 @@ pub struct StaticConfig {
 
 impl Default for StaticConfig {
     fn default() -> Self {
-        Self { file: "static_records.csv".into(), authoritative: true }
+        Self {
+            file: "static_records.csv".into(),
+            authoritative: true,
+        }
     }
 }
 
@@ -160,7 +166,10 @@ pub struct LoggingConfig {
 
 impl Default for LoggingConfig {
     fn default() -> Self {
-        Self { level: "info".into(), log_queries: false }
+        Self {
+            level: "info".into(),
+            log_queries: false,
+        }
     }
 }
 
@@ -179,7 +188,10 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
-        anyhow::ensure!(!self.server.bind.is_empty(), "server.bind must not be empty");
+        anyhow::ensure!(
+            !self.server.bind.is_empty(),
+            "server.bind must not be empty"
+        );
         anyhow::ensure!(
             !self.upstream.primary.is_empty() || !self.upstream.fallback.is_empty(),
             "at least one upstream DNS server must be configured"
@@ -188,6 +200,10 @@ impl Config {
     }
 
     pub fn worker_count(&self) -> usize {
-        if self.server.workers == 0 { num_cpus::get().max(1) } else { self.server.workers }
+        if self.server.workers == 0 {
+            num_cpus::get().max(1)
+        } else {
+            self.server.workers
+        }
     }
 }

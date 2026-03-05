@@ -1,0 +1,83 @@
+name: Debug Build Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - work
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive: tar.gz
+            bin: veldns
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive: zip
+            bin: veldns.exe
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive: tar.gz
+            bin: veldns
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: debug-${{ matrix.target }}
+
+      - name: Build debug binary
+        run: cargo build --target ${{ matrix.target }}
+
+      - name: Package artifact (Unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          ARTIFACT_DIR="veldns-debug-${{ matrix.target }}"
+          mkdir -p "$ARTIFACT_DIR"
+          cp "target/${{ matrix.target }}/debug/${{ matrix.bin }}" "$ARTIFACT_DIR/${{ matrix.bin }}"
+          cp README.md "$ARTIFACT_DIR/README.md"
+          cp config.toml "$ARTIFACT_DIR/config.toml"
+          cp static_records.csv "$ARTIFACT_DIR/static_records.csv"
+          tar -czf "${ARTIFACT_DIR}.tar.gz" "$ARTIFACT_DIR"
+          echo "ARTIFACT=${ARTIFACT_DIR}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package artifact (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $dir = "veldns-debug-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item "target\${{ matrix.target }}\debug\${{ matrix.bin }}" "$dir\${{ matrix.bin }}"
+          Copy-Item README.md "$dir\README.md"
+          Copy-Item config.toml "$dir\config.toml"
+          Copy-Item static_records.csv "$dir\static_records.csv"
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
+          echo "ARTIFACT=$dir.zip" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veldns-debug-${{ matrix.target }}
+          path: ${{ env.ARTIFACT }}
+          retention-days: 7
