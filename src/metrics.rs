@@ -31,6 +31,7 @@ pub struct Metrics {
 
 macro_rules! inc {
     ($name:ident) => {
+        #[allow(dead_code)]
         pub fn $name(&self) {
             self.$name.fetch_add(1, Ordering::Relaxed);
         }
@@ -82,6 +83,7 @@ impl Metrics {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct Snapshot {
     pub queries_total:     u64,
     pub queries_static:    u64,
