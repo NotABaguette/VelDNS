@@ -7,26 +7,25 @@ use super::encoder::MaskEncoder;
 use super::fragmenter;
 use hickory_proto::op::Message;
 use hickory_proto::rr::{RData, RecordType};
-use rand::{random, Rng};
+use rand::Rng;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tracing::{debug, warn};
 
 pub struct ClientRelay {
-    cfg: TunnelMaskConfig,
+    cfg:          TunnelMaskConfig,
     detector_cfg: DetectorConfig,
-    encoder: Box<dyn MaskEncoder>,
+    encoder:      Box<dyn MaskEncoder>,
 }
 
 impl ClientRelay {
-    pub fn new(cfg: TunnelMaskConfig, encoder: Box<dyn MaskEncoder>) -> Self {
+    pub fn new(
+        cfg: TunnelMaskConfig,
+        encoder: Box<dyn MaskEncoder>,
+    ) -> Self {
         let detector_cfg = DetectorConfig::from(&cfg);
-        Self {
-            cfg,
-            detector_cfg,
-            encoder,
-        }
+        Self { cfg, detector_cfg, encoder }
     }
 
     /// Returns `Some(response_bytes)` if the query was intercepted and
@@ -42,22 +41,26 @@ impl ClientRelay {
         if !detector::is_tunnel_query(qname, qtype, &self.detector_cfg) {
             return None;
         }
-        debug!(
-            "tunnel_mask client: intercepting tunnel query ({} bytes)",
-            raw_query.len()
-        );
+        debug!("tunnel_mask client: intercepting tunnel query ({} bytes)", raw_query.len());
 
         // ── 2. Fragment the entire raw DNS query ─────────────────────
-        let session_id: u32 = random();
-        let capacity = self
-            .encoder
-            .payload_capacity(self.cfg.max_qname_len, &self.cfg.relay_zone);
+        let mut rng = rand::thread_rng();
+        let session_id: u32 = rng.gen();
+        let capacity = self.encoder.payload_capacity(
+            self.cfg.max_qname_len,
+            &self.cfg.relay_zone,
+        );
         if capacity == 0 {
             warn!("tunnel_mask client: payload capacity is 0 — check max_qname_len / relay_zone");
             return None;
         }
 
-        let fragments = fragmenter::fragment(session_id, qtype as u8, raw_query, capacity);
+        let fragments = fragmenter::fragment(
+            session_id,
+            qtype as u8,
+            raw_query,
+            capacity,
+        );
         debug!(
             "tunnel_mask client: session {session_id:#010x}, {} fragment(s), cap={capacity}",
             fragments.len()
@@ -66,11 +69,8 @@ impl ClientRelay {
         // ── 3. Pick a resolver address ───────────────────────────────
         let resolver_str = self.cfg.resolver.first()?;
         let resolver_addr: SocketAddr = match resolver_str.parse() {
-            Ok(a) => a,
-            Err(e) => {
-                warn!("tunnel_mask client: bad resolver addr: {e}");
-                return None;
-            }
+            Ok(a)  => a,
+            Err(e) => { warn!("tunnel_mask client: bad resolver addr: {e}"); return None; }
         };
 
         // ── 4. Open a socket ─────────────────────────────────────────
@@ -80,11 +80,8 @@ impl ClientRelay {
             ([0u16; 8], 0u16).into()
         };
         let sock = match UdpSocket::bind(bind).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("tunnel_mask client: bind: {e}");
-                return None;
-            }
+            Ok(s)  => s,
+            Err(e) => { warn!("tunnel_mask client: bind: {e}"); return None; }
         };
 
         // ── 5. Send all fragment queries ─────────────────────────────
@@ -93,7 +90,7 @@ impl ClientRelay {
         for frag in &fragments {
             let frame = frag.to_frame();
             let masked_qname = self.encoder.encode_qname(&frame, &self.cfg.relay_zone);
-            let txid: u16 = random();
+            let txid: u16 = rng.gen();
             let query_pkt = build_aaaa_query(txid, &masked_qname);
 
             if let Err(e) = sock.send_to(&query_pkt, resolver_addr).await {
@@ -107,7 +104,7 @@ impl ClientRelay {
                 // Jitter between non-final fragments
                 let [lo, hi] = self.cfg.send_jitter_ms;
                 if hi > 0 && hi >= lo {
-                    let jitter = rand::thread_rng().gen_range(lo..=hi);
+                    let jitter = rng.gen_range(lo..=hi);
                     tokio::time::sleep(Duration::from_millis(jitter)).await;
                 }
             }
@@ -156,31 +153,29 @@ fn build_aaaa_query(id: u16, qname: &str) -> Vec<u8> {
     let mut pkt = Vec::with_capacity(128);
 
     // ── Header (12 bytes) ────────────────────────────────────────────
-    pkt.extend_from_slice(&id.to_be_bytes()); // ID
-    pkt.extend_from_slice(&[0x01, 0x00]); // Flags: RD=1
-    pkt.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT = 1
-    pkt.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT = 0
-    pkt.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT = 0
-    pkt.extend_from_slice(&1u16.to_be_bytes()); // ARCOUNT = 1 (OPT)
+    pkt.extend_from_slice(&id.to_be_bytes());          // ID
+    pkt.extend_from_slice(&[0x01, 0x00]);              // Flags: RD=1
+    pkt.extend_from_slice(&1u16.to_be_bytes());        // QDCOUNT = 1
+    pkt.extend_from_slice(&0u16.to_be_bytes());        // ANCOUNT = 0
+    pkt.extend_from_slice(&0u16.to_be_bytes());        // NSCOUNT = 0
+    pkt.extend_from_slice(&1u16.to_be_bytes());        // ARCOUNT = 1 (OPT)
 
     // ── Question ─────────────────────────────────────────────────────
     for label in qname.trim_end_matches('.').split('.') {
-        if label.is_empty() {
-            continue;
-        }
+        if label.is_empty() { continue; }
         pkt.push(label.len() as u8);
         pkt.extend_from_slice(label.as_bytes());
     }
-    pkt.push(0); // root label
-    pkt.extend_from_slice(&28u16.to_be_bytes()); // QTYPE  = AAAA
-    pkt.extend_from_slice(&1u16.to_be_bytes()); // QCLASS = IN
+    pkt.push(0);                                        // root label
+    pkt.extend_from_slice(&28u16.to_be_bytes());       // QTYPE  = AAAA
+    pkt.extend_from_slice(&1u16.to_be_bytes());        // QCLASS = IN
 
     // ── Additional: OPT record ───────────────────────────────────────
-    pkt.push(0); // NAME = root
-    pkt.extend_from_slice(&41u16.to_be_bytes()); // TYPE = OPT
-    pkt.extend_from_slice(&4096u16.to_be_bytes()); // UDP payload size
-    pkt.extend_from_slice(&0u32.to_be_bytes()); // Extended RCODE + flags
-    pkt.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH = 0
+    pkt.push(0);                                        // NAME = root
+    pkt.extend_from_slice(&41u16.to_be_bytes());       // TYPE = OPT
+    pkt.extend_from_slice(&4096u16.to_be_bytes());     // UDP payload size
+    pkt.extend_from_slice(&0u32.to_be_bytes());        // Extended RCODE + flags
+    pkt.extend_from_slice(&0u16.to_be_bytes());        // RDLENGTH = 0
 
     pkt
 }
@@ -194,7 +189,7 @@ fn extract_tunnel_response(response: &[u8]) -> Option<Vec<u8>> {
 
     let mut aaaa_bytes: Vec<u8> = Vec::new();
     for answer in msg.answers() {
-        if answer.record_type() == RecordType::AAAA {
+        if answer.rr_type() == RecordType::AAAA {
             if let Some(RData::AAAA(aaaa)) = answer.data() {
                 aaaa_bytes.extend_from_slice(&aaaa.0.octets());
             }

@@ -26,7 +26,6 @@
 | **High throughput** | Designed for millions of queries/second on modern hardware |
 | **Split-horizon DNS** | Same domain can resolve differently inside vs. outside your network |
 | **Blocklist / sinkhole** | Return `0.0.0.0` for ad/tracker domains |
-| **Tunnel mask relay** | Optional client/server mode that disguises tunnel traffic as AAAA lookups routed through a recursive resolver |
 
 ---
 
@@ -58,48 +57,14 @@ cargo build --release
 
 ## ⚙️ Configuration
 
-VelDNS is configured through a [TOML](https://toml.io) file.  Start from the repository's `config.toml` and edit to taste.
+VelDNS is configured through a [TOML](https://toml.io) file.  Copy `config.toml.example` and edit to taste.
 
 ```bash
-cp config.toml /etc/veldns/config.toml
+cp config.toml.example /etc/veldns/config.toml
 veldns --config /etc/veldns/config.toml
 ```
 
 The config path can also be supplied via the `VELDNS_CONFIG` environment variable.
-
-
-
-### Tunnel mask mode (optional)
-
-VelDNS can run in an optional `tunnel_mask` mode for dnstt/slipstream-style traffic shaping:
-
-- **client mode** intercepts suspicious tunnel queries locally, fragments them, and emits masked `AAAA` queries to a normal recursive resolver.
-- **server mode** (authoritative for your relay zone) reassembles fragments, forwards to your local tunnel server, and encodes the tunnel response back into `AAAA` answers.
-
-Both sides stay on plain DNS/53 traffic patterns (no DoH/HTTP in this layer).
-
-```toml
-[tunnel_mask]
-enabled    = true
-mode       = "client"                # or "server"
-relay_zone = "relay.example.net"
-encoding   = "hex"                   # recommended
-
-# client mode
-resolver       = ["8.8.8.8:53"]
-session_ttl_ms = 5000
-max_qname_len  = 120
-label_len      = 12
-send_jitter_ms = [3, 15]
-
-# server mode
-upstream_addr        = "127.0.0.1:5353"
-max_response_records = 10
-dummy_ttl            = 60
-response_ttl         = 30
-```
-
-Use this only when your DNS zone delegation is set so the server node is authoritative for `relay_zone`.
 
 ### Full annotated example
 
