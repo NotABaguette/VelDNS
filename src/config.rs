@@ -1,7 +1,11 @@
-use crate::tunnel_mask::TunnelMaskConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+// Import the tunnel_mask config type so we can embed it in the top-level config.
+// This avoids a circular dependency: config only imports from tunnel_mask::config,
+// which has no back-reference to the rest of VelDNS.
+use crate::tunnel_mask::config::TunnelMaskConfig;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level
@@ -40,11 +44,22 @@ impl Default for Config {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ServerConfig {
+    /// List of UDP addresses to listen on, e.g. ["0.0.0.0:53", "[::]:53"]
     pub bind: Vec<String>,
+
+    /// Worker threads per bind address.  0 = number of logical CPU cores.
     pub workers: usize,
+
+    /// Maximum UDP payload advertised in EDNS0 OPT records (bytes).
     pub max_udp_payload: u16,
+
+    /// Also listen for TCP DNS (for large responses / zone-transfers).
     pub tcp: bool,
+
+    /// Per-socket receive buffer size in bytes (0 = OS default).
     pub recv_buf: usize,
+
+    /// Per-socket send buffer size in bytes (0 = OS default).
     pub send_buf: usize,
 }
 
@@ -68,10 +83,21 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UpstreamConfig {
+    /// Primary resolvers – tried first (parallel if parallel=true).
     pub primary: Vec<String>,
+
+    /// Fallback resolvers – used only when all primary servers fail.
     pub fallback: Vec<String>,
+
+    /// Per-server query timeout in milliseconds.
     pub timeout_ms: u64,
+
+    /// Maximum retry attempts per server before marking it failed.
     pub retries: u32,
+
+    /// Fire queries at all primary servers simultaneously and use the
+    /// fastest response.  Wastes a little bandwidth but greatly reduces
+    /// tail latency.
     pub parallel: bool,
 }
 
@@ -94,10 +120,19 @@ impl Default for UpstreamConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CacheConfig {
+    /// Enable the in-memory response cache.
     pub enabled: bool,
+
+    /// Maximum number of cache entries before eviction begins.
     pub max_entries: usize,
+
+    /// Clamp TTLs to at least this many seconds (prevents zero-TTL storms).
     pub min_ttl: u32,
+
+    /// Clamp TTLs to at most this many seconds.
     pub max_ttl: u32,
+
+    /// TTL used for NXDOMAIN / SERVFAIL negative cache entries.
     pub negative_ttl: u32,
 }
 
@@ -120,13 +155,21 @@ impl Default for CacheConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DnssecConfig {
+    /// Forward DNSSEC records (RRSIG, DNSKEY, DS, NSEC, NSEC3) transparently
+    /// and set the DO bit in upstream queries.
     pub enabled: bool,
+
+    /// Perform full chain-of-trust validation on upstream responses via the
+    /// hickory-resolver validator.  Adds a small latency overhead.
     pub validate: bool,
 }
 
 impl Default for DnssecConfig {
     fn default() -> Self {
-        Self { enabled: true, validate: false }
+        Self {
+            enabled:  true,
+            validate: false,
+        }
     }
 }
 
@@ -137,13 +180,19 @@ impl Default for DnssecConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct StaticConfig {
+    /// Path to the CSV file containing static records.
     pub file: String,
+
+    /// Mark responses for static domains as Authoritative (AA bit).
     pub authoritative: bool,
 }
 
 impl Default for StaticConfig {
     fn default() -> Self {
-        Self { file: "static_records.csv".into(), authoritative: true }
+        Self {
+            file:          "static_records.csv".into(),
+            authoritative: true,
+        }
     }
 }
 
@@ -154,13 +203,19 @@ impl Default for StaticConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct LoggingConfig {
+    /// Minimum log level: trace | debug | info | warn | error
     pub level: String,
+
+    /// Log every individual DNS query (noisy; useful for debugging).
     pub log_queries: bool,
 }
 
 impl Default for LoggingConfig {
     fn default() -> Self {
-        Self { level: "info".into(), log_queries: false }
+        Self {
+            level:       "info".into(),
+            log_queries: false,
+        }
     }
 }
 
@@ -187,7 +242,12 @@ impl Config {
         Ok(())
     }
 
+    /// Effective number of worker threads.
     pub fn worker_count(&self) -> usize {
-        if self.server.workers == 0 { num_cpus::get().max(1) } else { self.server.workers }
+        if self.server.workers == 0 {
+            num_cpus::get().max(1)
+        } else {
+            self.server.workers
+        }
     }
 }

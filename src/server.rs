@@ -31,7 +31,7 @@ pub async fn run(
     let cfg     = Arc::new(cfg);
     let workers = cfg.worker_count();
 
-    // ── Background tasks ─────────────────────────────────────────────
+    // ── Background tasks ─────────────────────────────────────────────────
     let cache_bg = cache.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
@@ -40,7 +40,10 @@ pub async fn run(
 
     tokio::spawn(metrics::reporter(metrics.clone(), Duration::from_secs(30)));
 
-    // ── Spawn workers for every bind address ─────────────────────────
+    // Spawn tunnel_mask eviction task (server-mode only; no-op otherwise).
+    Arc::clone(&tunnel_mask).spawn_eviction_task();
+
+    // ── Spawn workers for every bind address ─────────────────────────────
     let mut joins = Vec::new();
 
     for addr_str in &cfg.server.bind {
@@ -88,6 +91,7 @@ pub async fn run(
         }
     }
 
+    // Block until all workers exit (they loop forever unless panicked).
     futures::future::join_all(joins).await;
     Ok(())
 }
@@ -97,6 +101,8 @@ pub async fn run(
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn udp_worker(id: usize, sock: Arc<UdpSocket>, handler: Handler) {
+    // Pre-allocated receive buffer; reused across queries to avoid per-query
+    // heap allocations in the hot path.
     let mut buf = vec![0u8; 4096];
 
     loop {
@@ -104,6 +110,7 @@ async fn udp_worker(id: usize, sock: Arc<UdpSocket>, handler: Handler) {
             Ok(v)  => v,
             Err(e) => {
                 error!("worker-{id} recv error: {e}");
+                // Brief back-off to avoid busy-looping on a broken socket.
                 tokio::time::sleep(Duration::from_millis(5)).await;
                 continue;
             }
@@ -113,18 +120,22 @@ async fn udp_worker(id: usize, sock: Arc<UdpSocket>, handler: Handler) {
         let sock  = sock.clone();
         let h     = handler.clone();
 
+        // Each query runs in its own task so slow upstream I/O or
+        // tunnel-mask reassembly never blocks the receive loop.
         tokio::spawn(async move {
-            if let Some(resp) = h.handle(&query).await {
+            if let Some(resp) = h.handle(&query, src).await {
                 if let Err(e) = sock.send_to(&resp, src).await {
                     warn!("send to {src}: {e}");
                 }
             }
+            // None means "send no response" — correct for non-final
+            // tunnel fragment queries on server-mode nodes.
         });
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TCP acceptor
+// TCP acceptor (RFC 1035 §4.2.2 – 2-byte length prefix)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async fn tcp_acceptor(listener: TcpListener, handler: Handler) {
@@ -148,9 +159,11 @@ async fn tcp_acceptor(listener: TcpListener, handler: Handler) {
 
 async fn tcp_session(
     mut stream: tokio::net::TcpStream,
-    _src:       SocketAddr,
+    src:        SocketAddr,
     handler:    Handler,
-) -> anyhow::Result<()> {
+) -> Result<()> {
+    // TCP DNS: a stream of messages each preceded by a 2-byte big-endian length.
+    // We support multiple queries per connection (pipelining).
     loop {
         let mut len_buf = [0u8; 2];
         match stream.read_exact(&mut len_buf).await {
@@ -164,7 +177,7 @@ async fn tcp_session(
         let mut query = vec![0u8; msg_len];
         stream.read_exact(&mut query).await?;
 
-        if let Some(resp) = handler.handle(&query).await {
+        if let Some(resp) = handler.handle(&query, src).await {
             let rlen = resp.len() as u16;
             stream.write_all(&rlen.to_be_bytes()).await?;
             stream.write_all(&resp).await?;
@@ -177,11 +190,14 @@ async fn tcp_session(
 // Socket construction
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn make_udp_socket(addr: SocketAddr, rcvbuf: usize, sndbuf: usize) -> anyhow::Result<std::net::UdpSocket> {
+fn make_udp_socket(addr: SocketAddr, rcvbuf: usize, sndbuf: usize) -> Result<std::net::UdpSocket> {
     let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
     let sock   = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
 
     sock.set_reuse_address(true)?;
+
+    // SO_REUSEPORT allows multiple sockets bound to the same address.
+    // The kernel distributes incoming packets across them (RSS-like behaviour).
     #[cfg(unix)]
     sock.set_reuse_port(true)?;
 
@@ -194,7 +210,7 @@ fn make_udp_socket(addr: SocketAddr, rcvbuf: usize, sndbuf: usize) -> anyhow::Re
     Ok(sock.into())
 }
 
-fn make_tcp_listener(addr: SocketAddr) -> anyhow::Result<std::net::TcpListener> {
+fn make_tcp_listener(addr: SocketAddr) -> Result<std::net::TcpListener> {
     let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
     let sock   = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
 
