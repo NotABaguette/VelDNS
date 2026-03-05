@@ -4,7 +4,7 @@
 
 **High-performance, concurrent DNS server written in Rust**
 
-[![Build](https://github.com/notABaguette/veldns/actions/workflows/build-cross-release.yml/badge.svg)](https://github.com/notABaguette/veldns/actions)
+[![Build](https://github.com/your-org/veldns/actions/workflows/release.yml/badge.svg)](https://github.com/your-org/veldns/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org)
 
@@ -33,13 +33,12 @@
 
 ### Download a pre-built binary
 
-Visit the [Releases](https://github.com/notABaguette/veldns/releases) page and download the archive for your platform.  Each archive contains the binary, a sample config, and a sample static-records CSV.
+Visit the [Releases](https://github.com/your-org/veldns/releases) page and download the archive for your platform.  Each archive contains the binary, a sample config, and a sample static-records CSV.
 
 ```bash
 tar -xzf veldns-*-x86_64-unknown-linux-musl.tar.gz
 cd veldns-*/
 sudo cp veldns /usr/local/bin/
-sudo mkdir /etc/veldns
 veldns --help
 ```
 
@@ -47,7 +46,7 @@ veldns --help
 
 ```bash
 # Prerequisites: Rust 1.75+ (https://rustup.rs)
-git clone https://github.com/notABaguette/veldns.git
+git clone https://github.com/your-org/veldns.git
 cd veldns
 cargo build --release
 ./target/release/veldns --config config.toml
@@ -192,7 +191,7 @@ Lines starting with `#` are comments.  Blank lines are ignored.
 
 | Platform | Target triple |
 |----------|--------------|
-| Linux x86-64 (glibc) (Typical Linux VM)       | `x86_64-unknown-linux-gnu`      |
+| Linux x86-64 (glibc)       | `x86_64-unknown-linux-gnu`      |
 | Linux x86-64 (static musl) | `x86_64-unknown-linux-musl`     |
 | Linux ARM64 (glibc)        | `aarch64-unknown-linux-gnu`     |
 | Linux ARM64 (static musl)  | `aarch64-unknown-linux-musl`    |
@@ -221,7 +220,6 @@ sudo veldns --config /etc/veldns/config.toml
 ```
 
 ### systemd service
-Just make sure to copy modified config.toml and static_records.csv into /etc/veldns before starting the service.
 
 ```ini
 # /etc/systemd/system/veldns.service
@@ -296,4 +294,140 @@ cross build --release --target aarch64-unknown-linux-musl
 
 ## 📝 License
 
-Use, modify and distribute as you like :)
+MIT – see [LICENSE](LICENSE).
+
+---
+
+## 🕵️ tunnel_mask — DNS Tunnel Traffic Masking
+
+`tunnel_mask` lets VelDNS relay [dnstt](https://www.bamsoftware.com/software/dnstt/) or [slipstream](https://github.com/the-tcpdump-group/slipstream) tunnel traffic through any recursive resolver on port 53 as innocent-looking AAAA queries. No DoH, no HTTP, no direct connection to the server node — pure DNS the entire way.
+
+### How it works
+
+```
+RESTRICTED NETWORK                        OPEN NETWORK
+─────────────────────────────────────     ────────────────────────────────────
+dnstt-client / slipstream-client          real dnstt / slipstream server
+    │  long TXT query                         ▲  original query reconstructed
+    ▼                                         │
+VelDNS CLIENT NODE                        VelDNS SERVER NODE
+(mode = "client")                         (mode = "server", auth NS for relay zone)
+  1. Detect tunnel query                    1. Receive AAAA query from resolver
+  2. Extract QNAME as raw payload           2. Decode fragment, buffer it
+  3. Split into N fragments (~32 B each)    3. Non-final → dummy AAAA response
+  4. Encode each as hex hash-looking QNAME  4. Final → spin-wait for stragglers
+  5. Send N AAAA queries to RESOLVER ──────▶   reassemble → forward upstream
+  6. Wait for final AAAA response           5. Encode tunnel response into AAAA
+  7. Decode AAAA records → tunnel response  6. Return AAAA data response
+    │  AAAA queries via normal DNS:
+    │  client → censoring resolver → NS lookup → VelDNS server node
+    ▼
+CENSORING RECURSIVE RESOLVER (e.g. 8.8.8.8)
+  - Sees only ordinary AAAA queries for *.relay.example.net
+  - Routes them to VelDNS server (authoritative NS for relay zone)
+  - Receives valid AAAA responses — nothing appears broken
+```
+
+The client never connects to the server node directly. Every query looks like a CDN hash lookup (hex mode): `4fa20b91a7c2.030207100ae7.c4a9b2c1d3e5.relay.example.net`.
+
+### Prerequisites
+
+**1. DNS zone delegation** (at your registrar, before enabling):
+
+```
+A    ns1.relay.example.net   <your-server-public-IP>
+NS   relay.example.net       ns1.relay.example.net
+```
+
+Replace `relay.example.net` with your chosen relay zone. All `*.relay.example.net` queries will now be routed to your server node by any recursive resolver in the world.
+
+**2. Two VelDNS instances:**
+
+| Instance | Network | `mode` | Also runs |
+|----------|---------|--------|-----------|
+| Client node | Restricted (censored) | `"client"` | dnstt-client / slipstream-client |
+| Server node | Open (uncensored) | `"server"` | dnstt-server / slipstream-server |
+
+### Configuration
+
+**Client node** (`/etc/veldns/config.toml`):
+
+```toml
+[tunnel_mask]
+enabled    = true
+mode       = "client"
+relay_zone = "relay.example.net"
+encoding   = "hex"
+
+# Send masked queries through the local recursive resolver, NOT directly
+# to the server node.
+resolver       = ["8.8.8.8:53"]
+session_ttl_ms = 5000
+max_qname_len  = 120
+label_len      = 12
+send_jitter_ms = [3, 15]
+
+# Tell the detector about your tunnel zone for instant recognition
+known_tunnel_zones = ["t.tunnel.example.com"]
+auto_detect        = true
+```
+
+**Server node** (`/etc/veldns/config.toml`):
+
+```toml
+[server]
+# Must be reachable as the authoritative NS for relay_zone.
+bind = ["0.0.0.0:53"]
+
+[tunnel_mask]
+enabled    = true
+mode       = "server"
+relay_zone = "relay.example.net"
+encoding   = "hex"          # must match client
+
+upstream_addr        = "127.0.0.1:5353"  # real dnstt/slipstream server port
+max_response_records = 10
+dummy_ttl            = 60
+response_ttl         = 30
+```
+
+### Capacity
+
+With the default settings (`max_qname_len = 120`, `label_len = 12`, `relay_zone` = 18 chars):
+
+| Direction | Per exchange | At 100 req/s |
+|-----------|-------------|--------------|
+| Upstream (client→server) | 32 B/fragment × 6 fragments = 192 B | ~3.2 KB/s |
+| Downstream (server→client) | 10 × 16 B − 2 B = 158 B/response | ~15.8 KB/s |
+
+A typical dnstt exchange (180 B query, 150 B response) uses **6 queries** through the resolver.
+
+### Encoding modes
+
+| Mode | QNAME looks like | Stealth |
+|------|-----------------|---------|
+| `hex` (default) | `4fa20b91a7c2.030207100ae7.relay.example.net` | ★★★ Indistinguishable from CDN hash lookups |
+| `syllable` | `tm4fa20b91-02-07-16.cdn0042-img1337.relay.example.net` | ★★ Readable but has detectable `tm` prefix |
+
+Use `hex` unless you have a specific reason not to.
+
+### Compatibility with slipstream
+
+Slipstream encodes QUIC payloads as base32 subdomains (e.g. `MFRA2YLNMFRA2YLN.t.example.com`). The detector scores these queries highly (long QNAME + high entropy + base32 saturation + TXT type) and intercepts them automatically. The QNAME bytes — already lowercased by the resolver — are carried through as-is; slipstream's base32 decoder is case-insensitive so this is transparent.
+
+For high-latency links with slipstream, consider:
+
+```toml
+send_jitter_ms = [1, 5]
+session_ttl_ms = 8000
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| Tunnel queries not intercepted on client | `auto_detect = false` and zone not in `known_tunnel_zones` | Add zone to `known_tunnel_zones` |
+| Server returns SERVFAIL on final fragment | Earlier fragments arrived too late (>50 ms after final) | Reduce link jitter or increase `send_jitter_ms` max |
+| Timeout on client | Relay zone NS delegation not working | Verify `dig NS relay.example.net` resolves to your server |
+| Resolver caches dummy responses | Shouldn't happen — each query has a unique nonce in the QNAME | Verify `encoding = "hex"` on both nodes |
+

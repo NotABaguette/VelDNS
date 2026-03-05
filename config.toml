@@ -1,93 +1,183 @@
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║                       VelDNS  –  config.toml                           ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
+#
+# All fields have sensible defaults; you only need to override what differs
+# from the defaults in your environment.
 
 # ── Server ────────────────────────────────────────────────────────────────────
 [server]
+# Addresses (and ports) to listen on.
+# Uncomment the IPv6 line to serve dual-stack.
 bind = [
     "0.0.0.0:53",
     # "[::]:53",
 ]
+
+# Worker threads per bind address.
+# 0 = auto-detect (one thread per logical CPU core – recommended).
 workers = 0
+
+# Maximum UDP payload size advertised in EDNS0.
+# 4096 bytes is a safe choice for almost every network path.
 max_udp_payload = 4096
+
+# Also accept DNS-over-TCP (needed for large responses and zone transfers).
 tcp = true
+
+# Increase these on very high-traffic servers (bytes; 0 = OS default).
 recv_buf = 0
 send_buf = 0
 
 
 # ── Upstream / forwarding ─────────────────────────────────────────────────────
 [upstream]
+# Primary resolvers – queried first.
+# With parallel = true (default), all primaries are queried simultaneously
+# and the fastest response wins.
 primary = [
-    "8.8.8.8:53",
-    "8.8.4.4:53",
+    "8.8.8.8:53",   # Google Public DNS
+    "8.8.4.4:53",   # Google Public DNS
 ]
+
+# Fallback resolvers – used only when every primary fails.
 fallback = [
-    "1.1.1.1:53",
-    "1.0.0.1:53",
-    "9.9.9.9:53",
+    "1.1.1.1:53",   # Cloudflare DNS
+    "1.0.0.1:53",   # Cloudflare DNS
+    "9.9.9.9:53",   # Quad9
 ]
+
+# Per-server response timeout in milliseconds.
 timeout_ms = 3000
+
+# Retry attempts per server before giving up.
 retries = 2
+
+# Query all primary servers at once and return the fastest response.
+# Slightly increases upstream load but dramatically cuts tail latency.
 parallel = true
 
 
 # ── In-memory response cache ──────────────────────────────────────────────────
 [cache]
 enabled     = true
-max_entries = 1_000_000
+max_entries = 1_000_000   # ~100–300 MB depending on record size
+
+# TTL floor: don't cache entries for less than 30 s (protects against floods).
 min_ttl = 30
+
+# TTL ceiling: never cache beyond one day.
 max_ttl = 86400
+
+# Cache time for NXDOMAIN / SERVFAIL responses.
 negative_ttl = 300
 
 
 # ── DNSSEC ────────────────────────────────────────────────────────────────────
 [dnssec]
+# Forward DNSSEC records transparently and set the DO bit in upstream queries.
 enabled = true
+
+# Full chain-of-trust validation (RRSIG / DNSKEY verification).
+# Adds a small latency overhead; disable if your upstream already validates.
 validate = false
 
 
 # ── Static record overrides ────────────────────────────────────────────────────
 [static_records]
+# Path to the CSV file.  Relative paths are resolved from the working directory.
 file = "static_records.csv"
+
+# Mark responses for static domains as Authoritative (AA = 1).
 authoritative = true
 
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 [logging]
+# One of: trace | debug | info | warn | error
+# Override at runtime: VELDNS_LOG=debug veldns
 level = "info"
+
+# Log every individual DNS query.  Very noisy; only enable for debugging.
 log_queries = false
 
 
-# ── Tunnel Mask ────────────────────────────────────────────────────────────────
-# Disguise dnstt/slipstream tunnel queries by splitting them into multiple
-# innocent-looking AAAA queries sent through a recursive resolver to a VelDNS
-# server node acting as authoritative NS for the relay zone.
+# ── Tunnel mask (optional) ────────────────────────────────────────────────────
 #
-# Uncomment and configure below to enable.
+# Intercepts dnstt / slipstream tunnel queries and relays them as innocent-
+# looking AAAA queries through a normal recursive resolver.  No DoH, no HTTP —
+# pure UDP DNS on port 53 the entire way.
+#
+# Two VelDNS instances are required:
+#   • One in the RESTRICTED network  (mode = "client")
+#   • One in the OPEN network        (mode = "server")
+#
+# DNS zone setup (do this at your registrar BEFORE enabling):
+#   A    ns1.relay.example.net  <server-public-IP>
+#   NS   relay.example.net      ns1.relay.example.net
+# All *.relay.example.net queries are then routed to the server node by any
+# recursive resolver — the client never needs the server's IP.
+#
+[tunnel_mask]
+enabled    = false            # set true on both nodes to activate
+mode       = "client"         # "client" (restricted net) or "server" (open net)
+relay_zone = "relay.example.net"  # must match on both nodes; NS-delegated to server
 
-# [tunnel_mask]
-# enabled    = true
-# mode       = "client"                     # "client" or "server"
-# relay_zone = "relay.example.net"
-# encoding   = "hex"                        # "hex" (recommended) or "syllable"
-#
-# # ── Client-only settings ──────────────────────────────────────────────────
-# resolver         = ["8.8.8.8:53"]         # resolver to send masked queries through
-# session_ttl_ms   = 5000                   # timeout waiting for final response
-# max_qname_len    = 120                    # total QNAME length cap (stealth tuning)
-# label_len        = 12                     # hex chars per label
-# send_jitter_ms   = [3, 15]               # random delay (ms) between non-final fragments
-#
-# # ── Server-only settings ─────────────────────────────────────────────────
-# upstream_addr        = "127.0.0.1:5353"   # real dnstt/slipstream server
-# max_response_records = 10                 # AAAA records per response (stealth tuning)
-# dummy_ttl            = 60                 # TTL for non-final (dummy) responses
-# response_ttl         = 30                 # TTL for final (data) responses
-#
-# # ── Detection tuning (client only) ──────────────────────────────────────
-# known_tunnel_zones        = ["t.tunnel.example.com"]
-# auto_detect               = true
-# qname_len_threshold       = 80
-# label_len_threshold       = 30
-# entropy_threshold         = 3.8
-# base32_fraction_threshold = 0.85
+# Encoding: "hex" (default, max stealth) or "syllable" (structured, detectable)
+encoding = "hex"
+
+# ── Client-only settings ──────────────────────────────────────────────────────
+
+# Upstream recursive resolver(s) to route masked queries THROUGH.
+# IMPORTANT: do NOT set this to the server node IP directly — queries must go
+# through the normal recursive resolver so traffic looks like ordinary DNS.
+# Typically matches [upstream].primary.
+resolver = ["8.8.8.8:53"]
+
+# How long (ms) to wait for the final response before giving up (SERVFAIL).
+session_ttl_ms = 5000
+
+# Maximum QNAME length (chars) per masked fragment query.
+# 120 gives 32 bytes of payload per fragment at the default label_len = 12.
+max_qname_len = 120
+
+# Hex chars per DNS label (hex mode only).  12 looks like a CDN content hash.
+label_len = 12
+
+# Random delay range [min, max] ms between successive non-final fragment sends.
+# Spreads the burst; keep low enough to stay within session_ttl_ms.
+send_jitter_ms = [3, 15]
+
+# ── Server-only settings ──────────────────────────────────────────────────────
+
+# IP:port of the real dnstt / slipstream server process.
+upstream_addr = "127.0.0.1:5353"
+
+# Maximum AAAA records per data response (each = 16 bytes; 10 = 158 B net).
+max_response_records = 10
+
+# TTL for dummy AAAA responses (non-final fragments).  Non-zero so the resolver
+# sees a healthy authoritative server.
+dummy_ttl = 60
+
+# TTL for AAAA data responses (final fragment carrying the tunnel response).
+response_ttl = 30
+
+# ── Detection tuning (client only) ────────────────────────────────────────────
+
+# Unconditionally treat queries to these zones as tunnel traffic.
+# Add your dnstt / slipstream tunnel zone here.
+# known_tunnel_zones = ["t.tunnel.example.com"]
+
+# Enable heuristic auto-detection for zones not in known_tunnel_zones.
+auto_detect = true
+
+# Scoring thresholds (score ≥ 2 triggers interception):
+qname_len_threshold        = 80    # long QNAME rule
+label_len_threshold        = 30    # long label rule
+entropy_threshold          = 3.8   # Shannon entropy rule
+base32_fraction_threshold  = 0.85  # base32 saturation rule
+
+# Optional: path to a plain-text file (one CVC word per line, 4096+ entries)
+# used when encoding = "syllable".  Ignored in hex mode.
+# syllable_list_file = "/etc/veldns/syllables.txt"

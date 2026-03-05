@@ -4,7 +4,7 @@ version     = "0.2.0"
 edition     = "2021"
 description = "High-performance, concurrent DNS server with static record overrides and upstream mirroring"
 license     = "MIT"
-repository  = "https://github.com/NotABaguette/VelDNS"
+repository  = "https://github.com/your-org/veldns"
 keywords    = ["dns", "server", "network", "dnssec"]
 categories  = ["network-programming", "command-line-utilities"]
 
@@ -17,17 +17,17 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["full"] }
 
 # DNS protocol handling (hickory-dns / formerly trust-dns)
-hickory-proto    = { version = "0.24", features = ["dnssec-ring"] }
+hickory-proto = { version = "0.24", features = ["dnssec-ring"] }
 
 # Concurrent data structures (lock-free)
-dashmap    = "5"
+dashmap    = "6"
 arc-swap   = "1"
 
 # Serialization
-serde       = { version = "1", features = ["derive"] }
-serde_json  = "1"
-toml        = "0.8"
-csv         = "1"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "0.8"
+csv        = "1"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
@@ -37,7 +37,7 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 # Error handling
-anyhow = "1"
+anyhow    = "1"
 thiserror = "1"
 
 # Networking
@@ -45,14 +45,12 @@ socket2  = { version = "0.5", features = ["all"] }
 num_cpus = "1"
 bytes    = "1"
 
-# Locks
-parking_lot = "0.12"
-
-# Utilities
-futures = "0.3"
-
-# Random number generation (used by tunnel_mask for session IDs, nonces, jitter)
+# Randomness (nonce generation, jitter)
 rand = "0.8"
+
+# Locks / utilities
+parking_lot = "0.12"
+futures     = "0.3"
 
 [profile.release]
 opt-level     = 3
