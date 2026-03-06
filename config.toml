@@ -163,6 +163,10 @@ dummy_ttl = 60
 # TTL for AAAA data responses (final fragment carrying the tunnel response).
 response_ttl = 30
 
+# Wait window (ms) after receiving the final fragment for late-arriving
+# earlier fragments before returning SERVFAIL.
+final_spin_wait_ms = 1200
+
 # ── Detection tuning (client only) ────────────────────────────────────────────
 
 # Unconditionally treat queries to these zones as tunnel traffic.

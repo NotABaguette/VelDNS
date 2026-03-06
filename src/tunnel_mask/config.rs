@@ -24,7 +24,9 @@ pub enum NodeMode {
 }
 
 impl Default for NodeMode {
-    fn default() -> Self { NodeMode::Client }
+    fn default() -> Self {
+        NodeMode::Client
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +47,9 @@ pub enum EncodingMode {
 }
 
 impl Default for EncodingMode {
-    fn default() -> Self { EncodingMode::Hex }
+    fn default() -> Self {
+        EncodingMode::Hex
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +65,6 @@ impl Default for EncodingMode {
 #[serde(default)]
 pub struct TunnelMaskConfig {
     // ── Global ───────────────────────────────────────────────────────────────
-
     /// Enable or disable the entire subsystem.  When `false` (default),
     /// `handle_query` is a no-op and adds zero overhead.
     pub enabled: bool,
@@ -82,7 +85,6 @@ pub struct TunnelMaskConfig {
     pub encoding: EncodingMode,
 
     // ── Client-only ───────────────────────────────────────────────────────────
-
     /// Upstream recursive resolver(s) through which masked queries are routed.
     ///
     /// **Queries go HERE, not directly to the server node.**  The recursive
@@ -111,7 +113,6 @@ pub struct TunnelMaskConfig {
     pub send_jitter_ms: [u64; 2],
 
     // ── Server-only ───────────────────────────────────────────────────────────
-
     /// `IP:port` of the real dnstt / slipstream server.  The server node
     /// forwards reconstructed original queries here.  Default: `"127.0.0.1:5353"`.
     pub upstream_addr: String,
@@ -129,8 +130,15 @@ pub struct TunnelMaskConfig {
     /// Default: 30.
     pub response_ttl: u32,
 
-    // ── Detection tuning (client only) ───────────────────────────────────────
+    /// How long the server waits (ms) after receiving the final fragment for
+    /// late-arriving earlier fragments before returning SERVFAIL.
+    ///
+    /// Real recursive paths can reorder or delay packets by hundreds of
+    /// milliseconds; a very small wait window causes avoidable reassembly
+    /// failures under normal internet jitter.  Default: 1200.
+    pub final_spin_wait_ms: u64,
 
+    // ── Detection tuning (client only) ───────────────────────────────────────
     /// QNAME suffixes that are unconditionally treated as tunnel zones.
     /// Matching queries bypass the scoring heuristic entirely.
     pub known_tunnel_zones: Vec<String>,
@@ -156,7 +164,6 @@ pub struct TunnelMaskConfig {
     pub base32_fraction_threshold: f64,
 
     // ── Syllable encoder (optional) ───────────────────────────────────────────
-
     /// Path to a plain-text file containing one CVC word per line (4 096+
     /// entries).  If set and the file exists, it replaces the built-in word
     /// table.  If the file has fewer than 4 096 entries the remainder is filled
@@ -167,26 +174,27 @@ pub struct TunnelMaskConfig {
 impl Default for TunnelMaskConfig {
     fn default() -> Self {
         Self {
-            enabled:                  false,
-            mode:                     NodeMode::Client,
-            relay_zone:               "relay.example.net".into(),
-            encoding:                 EncodingMode::Hex,
-            resolver:                 vec!["8.8.8.8:53".into()],
-            session_ttl_ms:           5_000,
-            max_qname_len:            120,
-            label_len:                12,
-            send_jitter_ms:           [3, 15],
-            upstream_addr:            "127.0.0.1:5353".into(),
-            max_response_records:     10,
-            dummy_ttl:                60,
-            response_ttl:             30,
-            known_tunnel_zones:       vec![],
-            auto_detect:              true,
-            qname_len_threshold:      80,
-            label_len_threshold:      30,
-            entropy_threshold:        3.8,
+            enabled: false,
+            mode: NodeMode::Client,
+            relay_zone: "relay.example.net".into(),
+            encoding: EncodingMode::Hex,
+            resolver: vec!["8.8.8.8:53".into()],
+            session_ttl_ms: 5_000,
+            max_qname_len: 120,
+            label_len: 12,
+            send_jitter_ms: [3, 15],
+            upstream_addr: "127.0.0.1:5353".into(),
+            max_response_records: 10,
+            dummy_ttl: 60,
+            response_ttl: 30,
+            final_spin_wait_ms: 1_200,
+            known_tunnel_zones: vec![],
+            auto_detect: true,
+            qname_len_threshold: 80,
+            label_len_threshold: 30,
+            entropy_threshold: 3.8,
             base32_fraction_threshold: 0.85,
-            syllable_list_file:       None,
+            syllable_list_file: None,
         }
     }
 }
@@ -208,12 +216,14 @@ impl TunnelMaskConfig {
     /// ```
     #[allow(dead_code)]
     pub fn bytes_per_fragment_hex(&self) -> usize {
-        let zone_len       = self.relay_zone.trim_matches('.').len();
+        let zone_len = self.relay_zone.trim_matches('.').len();
         let label_with_dot = self.label_len + 1;
-        let available      = self.max_qname_len.saturating_sub(zone_len + 1);
-        let n_labels       = available / label_with_dot;
-        if n_labels == 0 { return 1; }
-        let hex_chars   = n_labels * self.label_len;
+        let available = self.max_qname_len.saturating_sub(zone_len + 1);
+        let n_labels = available / label_with_dot;
+        if n_labels == 0 {
+            return 1;
+        }
+        let hex_chars = n_labels * self.label_len;
         let total_bytes = hex_chars / 2;
         total_bytes.saturating_sub(10).max(1)
     }
@@ -229,15 +239,17 @@ impl TunnelMaskConfig {
     #[allow(dead_code)]
     pub fn bytes_per_fragment_syllable(&self) -> usize {
         const METADATA_WITH_DOT: usize = 23; // 22 chars + leading dot
-        const PAIR_WITH_DOT:     usize = 22; // 21 chars max + dot
-        const BYTES_PER_PAIR:    usize = 6;
+        const PAIR_WITH_DOT: usize = 22; // 21 chars max + dot
+        const BYTES_PER_PAIR: usize = 6;
 
         let zone_len = self.relay_zone.trim_matches('.').len();
         // Bytes consumed by fixed parts: metadata + dot-before-zone + zone
         let fixed = METADATA_WITH_DOT + zone_len + 1;
-        if self.max_qname_len <= fixed { return BYTES_PER_PAIR; }
+        if self.max_qname_len <= fixed {
+            return BYTES_PER_PAIR;
+        }
         let available = self.max_qname_len - fixed;
-        let n_pairs   = (available / PAIR_WITH_DOT).max(1);
+        let n_pairs = (available / PAIR_WITH_DOT).max(1);
         n_pairs * BYTES_PER_PAIR
     }
 
@@ -245,7 +257,7 @@ impl TunnelMaskConfig {
     #[allow(dead_code)]
     pub fn bytes_per_fragment(&self) -> usize {
         match self.encoding {
-            EncodingMode::Hex      => self.bytes_per_fragment_hex(),
+            EncodingMode::Hex => self.bytes_per_fragment_hex(),
             EncodingMode::Syllable => self.bytes_per_fragment_syllable(),
         }
     }
