@@ -40,11 +40,11 @@ use crate::tunnel_mask::fragmenter::new_session_id;
 
 pub(crate) struct ReassemblySession {
     /// Per-index slot for each fragment's raw payload bytes.
-    fragments:  Vec<Option<Vec<u8>>>,
+    fragments: Vec<Option<Vec<u8>>>,
     /// Total expected fragment count (from the first-received frame header).
-    total:      u8,
+    total: u8,
     /// How many distinct slots have been filled.
-    received:   u8,
+    received: u8,
     /// Original DNS QTYPE, carried from the frame header of any fragment.
     orig_qtype: RecordType,
     /// Wall-clock creation time; used for TTL-based eviction.
@@ -54,9 +54,9 @@ pub(crate) struct ReassemblySession {
 impl ReassemblySession {
     fn new(total: u8, orig_qtype: RecordType) -> Self {
         Self {
-            fragments:  vec![None; total as usize],
+            fragments: vec![None; total as usize],
             total,
-            received:   0,
+            received: 0,
             orig_qtype,
             created_at: Instant::now(),
         }
@@ -66,7 +66,9 @@ impl ReassemblySession {
     /// Silently ignores out-of-range indices or duplicate inserts.
     fn insert(&mut self, seq: u8, payload: Vec<u8>) {
         let idx = seq as usize;
-        if idx >= self.fragments.len() { return; }
+        if idx >= self.fragments.len() {
+            return;
+        }
         if self.fragments[idx].is_none() {
             self.received += 1;
         }
@@ -87,7 +89,8 @@ impl ReassemblySession {
         let mut out = Vec::new();
         for slot in &self.fragments {
             out.extend_from_slice(
-                slot.as_ref().expect("reassemble called on incomplete session"),
+                slot.as_ref()
+                    .expect("reassemble called on incomplete session"),
             );
         }
         out
@@ -99,8 +102,8 @@ impl ReassemblySession {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct ServerRelay {
-    cfg:      Arc<TunnelMaskConfig>,
-    encoder:  Arc<dyn MaskEncoder>,
+    cfg: Arc<TunnelMaskConfig>,
+    encoder: Arc<dyn MaskEncoder>,
     sessions: Arc<DashMap<u32, ReassemblySession>>,
 }
 
@@ -129,14 +132,14 @@ impl ServerRelay {
     /// always produces a response.
     pub async fn handle_query(
         &self,
-        qname:    &str,
-        _qtype:   u16, // always AAAA by the time we get here; kept for symmetry
-        dns_id:   u16,
-        _src:     SocketAddr,
+        qname: &str,
+        _qtype: u16, // always AAAA by the time we get here; kept for symmetry
+        dns_id: u16,
+        _src: SocketAddr,
     ) -> Option<Vec<u8>> {
         match self.process(qname, dns_id).await {
             Ok(resp) => Some(resp),
-            Err(e)   => {
+            Err(e) => {
                 warn!("tunnel_mask server error (qname={qname}): {e:#}");
                 Some(build_servfail(dns_id))
             }
@@ -155,7 +158,7 @@ impl ServerRelay {
         // zone and must always answer.
         let (header, payload) = match self.encoder.decode(qname, &cfg.relay_zone) {
             Some(v) => v,
-            None    => {
+            None => {
                 trace!(
                     qname,
                     "tunnel_mask server: QNAME does not decode as a valid fragment; \
@@ -169,21 +172,22 @@ impl ServerRelay {
             return Ok(build_dummy_aaaa_response(dns_id, qname, cfg.dummy_ttl));
         }
 
-        let is_final    = header.frag_idx + 1 == header.frag_total;
-        let orig_qtype  = RecordType::from(header.qtype as u16);
-        let session_id  = header.session_id;
+        let is_final = header.frag_idx + 1 == header.frag_total;
+        let orig_qtype = RecordType::from(header.qtype as u16);
+        let session_id = header.session_id;
 
         trace!(
-            session  = format!("{:08x}", session_id),
-            seq      = header.frag_idx,
-            total    = header.frag_total,
+            session = format!("{:08x}", session_id),
+            seq = header.frag_idx,
+            total = header.frag_total,
             is_final,
             "tunnel_mask server: fragment received"
         );
 
         // ── 2. Insert into (or create) the reassembly session ─────────────
         {
-            let mut session = self.sessions
+            let mut session = self
+                .sessions
                 .entry(session_id)
                 .or_insert_with(|| ReassemblySession::new(header.frag_total, orig_qtype));
             session.insert(header.frag_idx, payload);
@@ -197,17 +201,25 @@ impl ServerRelay {
             return Ok(build_dummy_aaaa_response(dns_id, qname, cfg.dummy_ttl));
         }
 
-        // ── 4. Final fragment: spin-wait up to 50 ms for stragglers ───────
-        // Earlier fragments may have been reordered or slightly delayed.
-        // We yield back to the Tokio executor every 1 ms so other query tasks
-        // can insert their fragments concurrently (cooperative, not a true spin).
-        let spin_deadline = Instant::now() + Duration::from_millis(50);
+        // ── 4. Final fragment: wait for stragglers within configured window ──
+        // Earlier fragments may be reordered or delayed by recursive resolver
+        // fan-out, cache misses, or path jitter.  A tiny fixed wait window
+        // (e.g. 50 ms) is often too aggressive on real networks and causes
+        // false SERVFAILs even though all fragments eventually arrive.
+        //
+        // Use the configurable `final_spin_wait_ms` so operators can tune this
+        // for their resolver path, and keep yielding every 1 ms so concurrent
+        // query tasks can continue inserting fragments.
+        let spin_deadline = Instant::now() + Duration::from_millis(cfg.final_spin_wait_ms);
         loop {
-            let complete = self.sessions
+            let complete = self
+                .sessions
                 .get(&session_id)
                 .map(|s| s.is_complete())
                 .unwrap_or(false);
-            if complete { break; }
+            if complete {
+                break;
+            }
             if Instant::now() >= spin_deadline {
                 self.sessions.remove(&session_id);
                 warn!(
@@ -221,7 +233,8 @@ impl ServerRelay {
 
         // ── 5. Reassemble ─────────────────────────────────────────────────
         let (orig_qtype, reassembled) = {
-            let session = self.sessions
+            let session = self
+                .sessions
                 .get(&session_id)
                 .ok_or_else(|| anyhow!("session {:08x} vanished during reassembly", session_id))?;
             (session.orig_qtype, session.reassemble())
@@ -245,7 +258,9 @@ impl ServerRelay {
 
         // ── 7. Forward to the real tunnel server with a fresh DNS ID ──────
         let fresh_id: u16 = new_session_id() as u16 ^ random::<u16>();
-        let tunnel_resp = self.forward_to_upstream(orig_qname, fresh_id, orig_qtype).await?;
+        let tunnel_resp = self
+            .forward_to_upstream(orig_qname, fresh_id, orig_qtype)
+            .await?;
 
         // ── 8. Encode tunnel response into AAAA records and return ─────────
         let aaaa_response = build_aaaa_data_response(
@@ -264,11 +279,13 @@ impl ServerRelay {
 
     async fn forward_to_upstream(
         &self,
-        qname:  &str,
+        qname: &str,
         dns_id: u16,
-        qtype:  RecordType,
+        qtype: RecordType,
     ) -> Result<Vec<u8>> {
-        let upstream: SocketAddr = self.cfg.upstream_addr
+        let upstream: SocketAddr = self
+            .cfg
+            .upstream_addr
             .parse()
             .with_context(|| format!("invalid upstream_addr '{}'", self.cfg.upstream_addr))?;
 
@@ -281,9 +298,11 @@ impl ServerRelay {
         let wire = build_forward_query(qname, qtype, dns_id)
             .context("tunnel_mask server: build forward query")?;
 
-        let sock = UdpSocket::bind(bind).await
+        let sock = UdpSocket::bind(bind)
+            .await
             .context("tunnel_mask server: bind socket for upstream forward")?;
-        sock.send_to(&wire, upstream).await
+        sock.send_to(&wire, upstream)
+            .await
             .context("tunnel_mask server: send to tunnel upstream")?;
 
         let mut buf = vec![0u8; 8192];
@@ -305,16 +324,13 @@ impl ServerRelay {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Spawn a Tokio task that evicts expired reassembly sessions once per second.
-pub fn spawn_eviction_task(
-    sessions: Arc<DashMap<u32, ReassemblySession>>,
-    ttl_ms:   u64,
-) {
+pub fn spawn_eviction_task(sessions: Arc<DashMap<u32, ReassemblySession>>, ttl_ms: u64) {
     let ttl = Duration::from_millis(ttl_ms);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         loop {
             tick.tick().await;
-            let before  = sessions.len();
+            let before = sessions.len();
             sessions.retain(|_, s| !s.is_expired(ttl));
             let evicted = before.saturating_sub(sessions.len());
             if evicted > 0 {
@@ -381,10 +397,10 @@ fn build_dummy_aaaa_response(dns_id: u16, qname: &str, ttl: u32) -> Vec<u8> {
 
         let mut rec = Record::new();
         rec.set_name(name)
-           .set_ttl(ttl)
-           .set_dns_class(DNSClass::IN)
-           .set_rr_type(RecordType::AAAA)
-           .set_data(Some(RData::AAAA(AAAA(dummy_ip))));
+            .set_ttl(ttl)
+            .set_dns_class(DNSClass::IN)
+            .set_rr_type(RecordType::AAAA)
+            .set_data(Some(RData::AAAA(AAAA(dummy_ip))));
         msg.add_answer(rec);
     }
 
@@ -404,11 +420,11 @@ fn build_dummy_aaaa_response(dns_id: u16, qname: &str, ttl: u32) -> Vec<u8> {
 /// the length field is updated to reflect the truncated data length; the tunnel
 /// protocol's reliability layer (KCP / QUIC) handles retransmission of the rest.
 fn build_aaaa_data_response(
-    dns_id:      u16,
-    qname:       &str,
+    dns_id: u16,
+    qname: &str,
     tunnel_resp: &[u8],
     response_ttl: u32,
-    max_records:  usize,
+    max_records: usize,
 ) -> Result<Vec<u8>> {
     // Prepend 2-byte big-endian length.
     let full_len = u16::try_from(tunnel_resp.len())
@@ -460,10 +476,10 @@ fn build_aaaa_data_response(
         let ip = Ipv6Addr::from(ip_bytes);
         let mut rec = Record::new();
         rec.set_name(name.clone())
-           .set_ttl(response_ttl)
-           .set_dns_class(DNSClass::IN)
-           .set_rr_type(RecordType::AAAA)
-           .set_data(Some(RData::AAAA(AAAA(ip))));
+            .set_ttl(response_ttl)
+            .set_dns_class(DNSClass::IN)
+            .set_rr_type(RecordType::AAAA)
+            .set_data(Some(RData::AAAA(AAAA(ip))));
         msg.add_answer(rec);
     }
 
@@ -485,5 +501,9 @@ fn build_servfail(dns_id: u16) -> Vec<u8> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn ensure_fqdn(s: &str) -> String {
-    if s.ends_with('.') { s.to_string() } else { format!("{s}.") }
+    if s.ends_with('.') {
+        s.to_string()
+    } else {
+        format!("{s}.")
+    }
 }

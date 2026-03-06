@@ -315,7 +315,7 @@ VelDNS CLIENT NODE                        VelDNS SERVER NODE
   1. Detect tunnel query                    1. Receive AAAA query from resolver
   2. Extract QNAME as raw payload           2. Decode fragment, buffer it
   3. Split into N fragments (~32 B each)    3. Non-final → dummy AAAA response
-  4. Encode each as hex hash-looking QNAME  4. Final → spin-wait for stragglers
+  4. Encode each as hex hash-looking QNAME  4. Final → wait for stragglers
   5. Send N AAAA queries to RESOLVER ──────▶   reassemble → forward upstream
   6. Wait for final AAAA response           5. Encode tunnel response into AAAA
   7. Decode AAAA records → tunnel response  6. Return AAAA data response
@@ -389,6 +389,7 @@ upstream_addr        = "127.0.0.1:5353"  # real dnstt/slipstream server port
 max_response_records = 10
 dummy_ttl            = 60
 response_ttl         = 30
+final_spin_wait_ms   = 1200  # tolerate resolver/path jitter
 ```
 
 ### Capacity
@@ -427,7 +428,7 @@ session_ttl_ms = 8000
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | Tunnel queries not intercepted on client | `auto_detect = false` and zone not in `known_tunnel_zones` | Add zone to `known_tunnel_zones` |
-| Server returns SERVFAIL on final fragment | Earlier fragments arrived too late (>50 ms after final) | Reduce link jitter or increase `send_jitter_ms` max |
+| Server returns SERVFAIL on final fragment | Earlier fragments arrived after the server wait window | Increase `final_spin_wait_ms` (server) and/or reduce `send_jitter_ms` spread (client) |
 | Timeout on client | Relay zone NS delegation not working | Verify `dig NS relay.example.net` resolves to your server |
 | Resolver caches dummy responses | Shouldn't happen — each query has a unique nonce in the QNAME | Verify `encoding = "hex"` on both nodes |
 
