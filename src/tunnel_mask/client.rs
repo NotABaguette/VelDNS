@@ -210,27 +210,51 @@ impl ClientRelay {
 
             let resp = &recv_buf[..n];
 
-            // Parse the DNS response header to extract the transaction ID.
-            // If parsing fails (malformed packet), just discard and keep waiting.
-            let dns_id = match Message::from_vec(resp) {
-                Ok(msg) => msg.id(),
-                Err(_)  => {
+            // Parse the full DNS response so we can inspect both the transaction
+            // ID and the rcode before attempting AAAA payload decode.
+            let msg = match Message::from_vec(resp) {
+                Ok(m)  => m,
+                Err(_) => {
                     trace!("tunnel_mask client: received malformed DNS packet, discarding");
                     continue;
                 }
             };
 
-            if dns_id != final_txid {
-                // Dummy response to one of the non-final fragments — discard.
+            if msg.id() != final_txid {
+                // Response to one of the non-final fragments — discard.
                 trace!(
-                    received_id = dns_id,
+                    received_id = msg.id(),
                     final_txid,
                     "tunnel_mask client: discarding non-final response"
                 );
                 continue;
             }
 
-            // ── 8. Decode the AAAA records back to tunnel response bytes ───
+            // ── 8. Check rcode before decoding ────────────────────────────
+            // The server returns NOERROR only when reassembly is complete and
+            // the tunnel upstream responded.  Any other rcode (SERVFAIL,
+            // REFUSED, NXDOMAIN …) means the server failed to reassemble —
+            // typically because one or more earlier fragments were dropped or
+            // refused by the recursive resolver.
+            //
+            // Do NOT exit the loop on a non-NOERROR response: the server may
+            // retry (or the dnstt client may retransmit the original query),
+            // producing a fresh session that succeeds within the deadline.
+            // Exiting immediately would cause the client to return an error and
+            // force the dnstt layer to time out, which is worse than waiting.
+            use hickory_proto::op::ResponseCode;
+            let rcode = msg.response_code();
+            if rcode != ResponseCode::NoError {
+                warn!(
+                    session    = format!("{:08x}", fragments[0].session_id),
+                    final_txid,
+                    ?rcode,
+                    "tunnel_mask client: final fragment got non-NOERROR rcode                      (server missing earlier fragments?); continuing to wait"
+                );
+                continue;
+            }
+
+            // ── 9. Decode the AAAA records back to tunnel response bytes ───
             let mut decoded = decode_aaaa_response(resp)
                 .context("tunnel_mask client: decode final AAAA response")?;
 
