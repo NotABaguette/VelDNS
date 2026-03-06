@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: ["tuunel_mask"]
   pull_request:
-    branches: ["**"]
+    branches: ["tunnel_mask"]
 
 permissions:
   contents: read
