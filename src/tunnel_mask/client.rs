@@ -8,8 +8,12 @@
 //! 4. For each fragment a binary frame (10-byte header + payload) is built,
 //!    encoded into a masked AAAA query QNAME, and sent to the **upstream
 //!    recursive resolver** (NOT directly to the server node).
-//! 5. Non-final fragments are sent fire-and-forget with a random jitter delay.
-//! 6. The client then waits in a receive loop, matching responses by the final
+//! 5. Non-final fragments are sent **concurrently**: each is dispatched as an
+//!    independent Tokio task that sleeps its own random jitter delay, then
+//!    sends.  All jitter sleeps happen in parallel so total elapsed time is
+//!    ≈ max(jitter) rather than sum(jitter × N).
+//! 6. After all non-final fragments have been sent, the final fragment is sent.
+//!    The client then enters a receive loop, matching responses by the final
 //!    fragment's DNS transaction ID.  Dummy responses from non-final fragments
 //!    arrive and are discarded.
 //! 7. When the final response is received its AAAA records are decoded back to
@@ -103,8 +107,9 @@ impl ClientRelay {
         } else {
             "[::]:0".parse().unwrap()
         };
-        let sock = UdpSocket::bind(bind_addr).await
-            .context("tunnel_mask client: bind ephemeral socket")?;
+        // Wrap in Arc so it can be shared across concurrent send tasks.
+        let sock = Arc::new(UdpSocket::bind(bind_addr).await
+            .context("tunnel_mask client: bind ephemeral socket")?);
 
         // ── 4. Assign a DNS transaction ID to each fragment query ──────────
         // We record the final fragment's ID so we can match the response.
@@ -119,22 +124,50 @@ impl ClientRelay {
             "tunnel_mask client: sending fragments"
         );
 
-        // ── 5. Send non-final fragments fire-and-forget with jitter ────────
+        // ── 5. Send non-final fragments CONCURRENTLY with per-task jitter ──
+        //
+        // BUG FIX: the original code did:
+        //   send frag[i] → sleep(jitter) → send frag[i+1] → sleep → ...
+        // Each fragment waited for the previous one's jitter sleep AND for the
+        // resolver's round-trip (~1 s each).  With 7 non-final frags that put
+        // frag 7 (the final) ~7 s after frag 0 — well past session_ttl_ms=5000.
+        //
+        // Fix: pre-build every wire packet, then spawn one task per non-final
+        // fragment.  Each task sleeps its own independent random jitter and
+        // sends.  All tasks are in flight simultaneously; the final fragment is
+        // sent only after all spawned tasks have at least been *dispatched*
+        // (join_all ensures they've completed their sends before we enter the
+        // receive loop, but crucially they sleep concurrently, not serially).
+        let mut send_handles = Vec::with_capacity(total.saturating_sub(1));
+
         for i in 0..total.saturating_sub(1) {
             let qname_frag = self.build_qname(&fragments[i]);
-            match build_dns_query(&qname_frag, RecordType::AAAA, txids[i]) {
-                Ok(wire) => {
-                    if let Err(e) = sock.send_to(&wire, resolver).await {
-                        warn!(seq = i, "tunnel_mask client: send failed: {e}");
-                    }
-                }
-                Err(e) => warn!(seq = i, "tunnel_mask client: build query: {e}"),
-            }
+            let wire = match build_dns_query(&qname_frag, RecordType::AAAA, txids[i]) {
+                Ok(w)  => w,
+                Err(e) => { warn!(seq = i, "tunnel_mask client: build query: {e}"); continue; }
+            };
 
-            // Random jitter: [send_jitter_ms[0], send_jitter_ms[1]] ms
-            let jitter = random_jitter_ms(cfg.send_jitter_ms[0], cfg.send_jitter_ms[1]);
-            tokio::time::sleep(Duration::from_millis(jitter)).await;
+            let sock_clone  = Arc::clone(&sock);
+            let jitter_min  = cfg.send_jitter_ms[0];
+            let jitter_max  = cfg.send_jitter_ms[1];
+            let seq         = i;
+
+            send_handles.push(tokio::spawn(async move {
+                // Each fragment sleeps its own independent jitter — they all
+                // sleep concurrently, so total elapsed ≈ max(jitter) not sum.
+                let jitter = random_jitter_ms(jitter_min, jitter_max);
+                tokio::time::sleep(Duration::from_millis(jitter)).await;
+                if let Err(e) = sock_clone.send_to(&wire, resolver).await {
+                    warn!(seq, "tunnel_mask client: send failed: {e}");
+                }
+            }));
         }
+
+        // Wait for all non-final fragments to be sent before sending the final.
+        // This preserves the spec requirement that the final fragment arrives
+        // last at the server (so the server's spin-wait finds all earlier frags
+        // already in the reassembly session).
+        futures::future::join_all(send_handles).await;
 
         // ── 6. Send the final fragment ─────────────────────────────────────
         let qname_final = self.build_qname(&fragments[total - 1]);
